@@ -1,0 +1,27 @@
+{
+  "name": "appkit-inspector",
+  "version": "0.1.0+codex.20260822130740",
+  "description": "Inspect live native AppKit interfaces inside Codex.",
+  "author": {
+    "name": "Jamin Zhou"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "AppKit Inspector",
+    "shortDescription": "Inspect native macOS views directly inside Codex.",
+    "longDescription": "Connect a Debug AppKit application, preview its current UI, click native views, inspect hierarchy and geometry, and send precise visual feedback back to Codex.",
+    "developerName": "Jamin Zhou",
+    "category": "Developer",
+    "capabilities": [
+      "Interactive",
+      "Local",
+      "Read"
+    ],
+    "defaultPrompt": [
+      "Connect to my running AppKit app and open the inspector.",
+      "Inspect the native view I select and locate its source.",
+      "Review this AppKit window for layout and accessibility issues."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

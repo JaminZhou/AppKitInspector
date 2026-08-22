@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "appkit_inspector": {
+      "command": "./scripts/start-server",
+      "args": [],
+      "cwd": ".",
+      "startup_timeout_sec": 10,
+      "tool_timeout_sec": 30
+    }
+  }
+}

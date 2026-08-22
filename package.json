@@ -1,0 +1,34 @@
+{
+  "name": "appkit-inspector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:native": "swift build --package-path native",
+    "check": "npm run typecheck && npm test && npm run build && npm run test:smoke && npm run test:native",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test packages/mcp/test/*.test.ts",
+    "test:smoke": "node scripts/smoke-mcp.mjs",
+    "test:live": "node scripts/smoke-live.mjs",
+    "test:native": "swift test --package-path native"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "1.7.5",
+    "@modelcontextprotocol/server": "2.0.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@types/node": "22.19.11",
+    "esbuild": "0.28.2",
+    "tsx": "4.21.0",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "overrides": {
+    "esbuild": "0.28.2"
+  }
+}

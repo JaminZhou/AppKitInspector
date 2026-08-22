@@ -1,0 +1,20 @@
+{
+  "name": "appkit-inspector-dev",
+  "interface": {
+    "displayName": "Appkit Inspector Dev"
+  },
+  "plugins": [
+    {
+      "name": "appkit-inspector",
+      "source": {
+        "source": "local",
+        "path": "./plugins/appkit-inspector"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer"
+    }
+  ]
+}

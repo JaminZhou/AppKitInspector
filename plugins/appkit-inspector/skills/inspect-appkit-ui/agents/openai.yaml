@@ -1,0 +1,4 @@
+interface:
+  display_name: "Inspect AppKit UI"
+  short_description: "Inspect a live AppKit view and send precise feedback"
+  default_prompt: "Use $inspect-appkit-ui to inspect this macOS AppKit interface and identify the selected view."
