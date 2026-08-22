@@ -28,11 +28,13 @@ In a second terminal, install the repository marketplace and plugin:
 ```bash
 codex plugin marketplace add /Users/JaminZhou/Developer/AppKitInspector
 codex plugin add appkit-inspector@appkit-inspector-dev
+open 'codex://plugins/appkit-inspector?marketplacePath=%2FUsers%2FJaminZhou%2FDeveloper%2FAppKitInspector%2F.agents%2Fplugins%2Fmarketplace.json'
 ```
 
-Start a new Codex task, ask it to list AppKit targets, connect to the demo, and open AppKit
-Inspector. When no native target is running, the embedded app opens a deterministic mock snapshot
-so the Codex integration can still be exercised.
+Continue in the same Codex task on the next turn, then ask it to list AppKit targets, connect to the
+demo, and open AppKit Inspector. The desktop App Server reloads MCP configuration for loaded tasks;
+a new task is not required. When no native target is running, the embedded app opens a deterministic
+mock snapshot so the Codex integration can still be exercised.
 
 ## Security boundary
 
