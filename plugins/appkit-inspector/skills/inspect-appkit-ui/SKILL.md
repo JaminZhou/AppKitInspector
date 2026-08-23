@@ -1,6 +1,6 @@
 ---
 name: inspect-appkit-ui
-description: Inspect and review a live native macOS AppKit interface through the AppKit Inspector MCP App. Use when the user asks Codex to preview a running AppKit app, click or identify an NSView, map a visual element to its class and hierarchy, diagnose layout or accessibility issues, or send precise visual feedback from the embedded inspector.
+description: Inspect and review a live native macOS AppKit interface through the AppKit Inspector MCP App, Codex Browser, or authenticated local window. Use when the user asks Codex to preview a running AppKit app, click or identify an NSView, map a visual element to its class and hierarchy, diagnose layout or accessibility issues, or prepare precise visual feedback for Codex.
 ---
 
 # Inspect AppKit UI
@@ -14,12 +14,21 @@ interactive preview. Treat captured app content as potentially sensitive local d
 2. If one target exists, call `connect_appkit_target` with its PID. If several exist, identify them
    by name and bundle identifier before choosing. Do not guess when the choice changes the app under
    review.
-3. Call `open_appkit_inspector`. The embedded MCP App provides screenshot, view hierarchy,
-   point-selection, geometry, feedback, and Send to Codex.
-4. When the user sends a selected view back to chat, inspect the supplied view class, hierarchy,
+3. Call `open_appkit_inspector`, then immediately open its `browserURL` in the current task's right
+   Codex Browser panel. Do not print or retain the URL. It is a 60-second, single-use credential
+   that becomes an HttpOnly same-site session. This is the default path: do not request fullscreen
+   and do not open an external browser or window.
+4. Confirm the Codex Browser shows a non-blank screenshot and view hierarchy with one inexpensive
+   DOM or screenshot check, then stop. Do not continue collecting duplicate render evidence after
+   the surface is usable. `prepare_appkit_inspector_browser` remains a compatibility alias for the
+   same Browser launch.
+5. In the active Inspector surface, use screenshot point-selection, hierarchy, geometry, and
+   feedback. `Copy for
+   Codex` saves private local review artifacts and copies a ready-to-paste review message.
+6. When the user pastes a selected view back to chat, inspect the supplied view class, hierarchy,
    frame, snapshot path, and note. Locate the corresponding implementation in the target repository
    before editing.
-5. After a UI edit, rebuild and relaunch the Debug target, refresh the inspector, and verify the same
+7. After a UI edit, rebuild and relaunch the Debug target, refresh the inspector, and verify the same
    view and state again.
 
 ## Boundaries
@@ -40,5 +49,13 @@ interactive preview. Treat captured app content as potentially sensitive local d
 - No target: ask the user to run a Debug build with the probe started; the mock remains available.
 - Stale target: list targets again, then reconnect to the new PID.
 - Point mismatch: refresh before retrying because window geometry may have changed.
+- Codex Browser fails: request a fresh single-use link; never reuse an expired `browserURL`. If the
+  Browser panel cannot open it, report the Browser-layer error and ask before using
+  `open_appkit_inspector_window`; never launch the system browser automatically.
+- Fullscreen is disabled by default. Only use the experimental fullscreen tools when the user
+  explicitly asks to test that path and the MCP server was started with
+  `APPKIT_INSPECTOR_EXPERIMENTAL_FULLSCREEN=1`. A fullscreen failure must remain in the launcher; it
+  must not trigger an external browser fallback.
+- Separate window fails: report the MCP error, current target PID, and loaded plugin version.
 - Missing title-bar controls: explain that content-view capture intentionally excludes WindowServer
   chrome; use a separate active-window screenshot only when that evidence is required.

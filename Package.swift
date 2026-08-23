@@ -10,14 +10,19 @@ let package = Package(
         .executable(name: "AppKitInspectorDemo", targets: ["AppKitInspectorDemo"]),
     ],
     targets: [
-        .target(name: "AppKitInspectorProbe"),
+        .target(
+            name: "AppKitInspectorProbe",
+            path: "native/Sources/AppKitInspectorProbe"
+        ),
         .executableTarget(
             name: "AppKitInspectorDemo",
-            dependencies: ["AppKitInspectorProbe"]
+            dependencies: ["AppKitInspectorProbe"],
+            path: "native/Sources/AppKitInspectorDemo"
         ),
         .testTarget(
             name: "AppKitInspectorProbeTests",
-            dependencies: ["AppKitInspectorProbe"]
+            dependencies: ["AppKitInspectorProbe"],
+            path: "native/Tests/AppKitInspectorProbeTests"
         ),
     ]
 )

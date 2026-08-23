@@ -24,13 +24,26 @@
       button, textarea { font: inherit; color: inherit; }
       button { cursor: pointer; }
       button:focus-visible, textarea:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; }
-      .shell { height: 100%; min-height: 640px; display: grid; grid-template-rows: 44px minmax(0, 1fr); }
+      .shell { height: 100%; min-height: 380px; display: grid; grid-template-rows: 44px minmax(0, 1fr); }
+      .shell.mode-window { min-height: 640px; }
+      .shell.mode-fullscreen { min-height: 100%; }
+      .launcher-shell { height: 100%; min-height: 140px; display: grid; grid-template-rows: 44px minmax(0, 1fr); background: var(--panel); }
       .toolbar { display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
       .toolbar strong { font-size: 13px; }
       .toolbar .status { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
       .toolbar .spacer { flex: 1; }
-      .toolbar button, .send { min-height: 28px; padding: 0 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+      .toolbar button, .send, .primary-action, .secondary-action { min-height: 28px; padding: 0 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
       .toolbar button:hover, .send:hover { background: color-mix(in srgb, var(--text) 7%, var(--panel)); }
+      .launcher { min-height: 0; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 16px; }
+      .launcher > div:first-child { min-width: 0; display: grid; gap: 4px; }
+      .launcher strong { font-size: 13px; }
+      .launcher span { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+      .launcher-actions { flex: none; display: flex; align-items: center; gap: 8px; }
+      .primary-action { flex: none; min-height: 32px; color: white; border-color: var(--accent); background: var(--accent); font-weight: 600; }
+      .primary-action:hover { background: color-mix(in srgb, var(--accent) 88%, white); }
+      .secondary-action { min-height: 32px; }
+      .secondary-action:hover { background: color-mix(in srgb, var(--text) 7%, var(--panel)); }
+      .primary-action:disabled, .secondary-action:disabled { cursor: default; opacity: .55; }
       .content { min-height: 0; display: grid; grid-template-columns: minmax(360px, 1fr) 310px; }
       .stage { min-width: 0; min-height: 0; display: grid; place-items: center; padding: 24px; overflow: auto; background: var(--bg); }
       .screen { position: relative; max-width: 100%; max-height: 100%; filter: drop-shadow(0 12px 28px #0004); }
@@ -51,11 +64,27 @@
       .send { color: white; border-color: var(--accent); background: var(--accent); font-weight: 600; }
       .send:disabled { cursor: default; opacity: .5; }
       .toast { min-height: 16px; color: var(--muted); font-size: 11px; }
+      .startup { min-height: 0; display: grid; place-items: center; padding: 32px; color: var(--muted); text-align: center; }
+      .startup strong { display: block; margin-bottom: 6px; color: var(--text); }
+      @media (max-width: 900px) { .toolbar .status { display: none; } }
+      @media (max-width: 640px) { .launcher { gap: 10px; padding-inline: 12px; } .launcher > div:first-child { display: none; } .launcher-actions { width: 100%; } .launcher-actions button { flex: 1; } }
       @media (max-width: 760px) { .content { grid-template-columns: 1fr; grid-template-rows: minmax(340px, 1fr) 280px; } .inspector { grid-template-rows: auto minmax(80px, 1fr) auto; border-left: 0; border-top: 1px solid var(--line); } }
     </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <main class="launcher-shell" data-startup-surface="true">
+        <header class="toolbar"><strong>AppKit Inspector</strong><span class="status">Starting…</span></header>
+        <section class="launcher" role="status"><div><strong>Inspect the connected AppKit app</strong><span>Selecting the best Inspector surface…</span></div><div class="launcher-actions"><button type="button" class="secondary-action" disabled>Open in Codex Browser</button><button type="button" class="primary-action" disabled>Open Inspector</button></div></section>
+      </main>
+    </div>
+    <script>
+      window.addEventListener("error", (event) => {
+        const root = document.querySelector("#app");
+        if (!root) return;
+        root.innerHTML = `<main class="shell"><header class="toolbar"><strong>AppKit Inspector</strong></header><div class="startup" role="alert"><div><strong>Inspector could not start</strong><span>${event.message || "Unknown JavaScript error"}</span></div></div></main>`;
+      });
+    </script>
     <script type="module" src="./app.js"></script>
   </body>
 </html>

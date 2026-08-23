@@ -25,6 +25,6 @@ MCP App. Keep it independent from any inspected product repository.
 ## Verification
 
 - Full automated check: `npm run check`
-- Release compile: `swift build --package-path native -c release`
+- Release compile: `swift build -c release`
 - Live bridge check: run `make demo`, then `npm run test:live` in another terminal.
 - Validate the plugin and skill with their respective Codex validation scripts before release.

@@ -1,17 +1,26 @@
 {
   "name": "appkit-inspector",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JaminZhou/AppKitInspector.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JaminZhou/AppKitInspector/issues"
+  },
+  "homepage": "https://github.com/JaminZhou/AppKitInspector#readme",
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "build:native": "swift build --package-path native",
+    "build:native": "swift build",
     "check": "npm run typecheck && npm test && npm run build && npm run test:smoke && npm run test:native",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test packages/mcp/test/*.test.ts",
+    "test": "tsx --test packages/mcp/test/*.test.ts packages/app/test/*.test.ts",
     "test:smoke": "node scripts/smoke-mcp.mjs",
     "test:live": "node scripts/smoke-live.mjs",
-    "test:native": "swift test --package-path native"
+    "test:native": "swift test"
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "1.7.5",

@@ -7,10 +7,11 @@ var __export = (target, all) => {
 
 // packages/mcp/src/server.ts
 import { randomUUID } from "node:crypto";
-import { chmod, mkdtemp, readFile as readFile2, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { chmod, mkdtemp, readFile as readFile3, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join as join2 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join as join3 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // node_modules/@modelcontextprotocol/server/dist/chunk-Br0eD_fh.mjs
 var __create = Object.create;
@@ -29380,9 +29381,269 @@ async function request(target, payload) {
   });
 }
 
+// packages/mcp/src/window-server.ts
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { readFile as readFile2 } from "node:fs/promises";
+import { createServer } from "node:http";
+import { join as join2 } from "node:path";
+import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+var MAX_REQUEST_BYTES = 64 * 1024;
+var MAX_RESPONSE_BYTES2 = 64 * 1024 * 1024;
+var BROWSER_LAUNCH_TTL_MS = 6e4;
+var BROWSER_SESSION_TTL_MS = 8 * 60 * 60 * 1e3;
+var SESSION_COOKIE = "appkit_inspector_session";
+function defaultOpenURL(url2) {
+  if (process.env.APPKIT_INSPECTOR_NO_OPEN === "1") return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    execFile("/usr/bin/open", ["-n", url2], (error51) => {
+      if (error51) reject(error51);
+      else resolve();
+    });
+  });
+}
+async function defaultLoadAssets() {
+  const directory = fileURLToPath(new URL(".", import.meta.url));
+  const [template, script] = await Promise.all([
+    readFile2(join2(directory, "preview.html"), "utf8"),
+    readFile2(join2(directory, "app.js"), "utf8")
+  ]);
+  return { template, script };
+}
+function send(response, status, body, contentType, headers = {}) {
+  if (Buffer.byteLength(body) > MAX_RESPONSE_BYTES2) {
+    send(response, 500, JSON.stringify({ error: "Inspector response exceeded 64 MiB" }), "application/json");
+    return;
+  }
+  response.writeHead(status, {
+    "Cache-Control": "no-store",
+    "Content-Type": `${contentType}; charset=utf-8`,
+    "Content-Length": Buffer.byteLength(body),
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    ...headers
+  });
+  response.end(body);
+}
+function sendJSON(response, status, value) {
+  send(response, status, JSON.stringify(value), "application/json");
+}
+async function readJSON(request2) {
+  const chunks = [];
+  let length = 0;
+  for await (const chunk of request2) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    length += buffer.length;
+    if (length > MAX_REQUEST_BYTES) throw new Error("Request body exceeded 64 KiB");
+    chunks.push(buffer);
+  }
+  const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Expected a JSON object");
+  }
+  return value;
+}
+var InspectorWindowServer = class {
+  constructor(backend, options = {}) {
+    this.backend = backend;
+    this.loadAssets = options.loadAssets ?? defaultLoadAssets;
+    this.openURL = options.openURL ?? defaultOpenURL;
+  }
+  backend;
+  token = randomBytes(32).toString("base64url");
+  loadAssets;
+  openURL;
+  server;
+  origin;
+  startPromise;
+  browserLaunches = /* @__PURE__ */ new Map();
+  browserSessions = /* @__PURE__ */ new Map();
+  async start() {
+    if (this.origin) return `${this.origin}/#token=${this.token}`;
+    if (this.startPromise) return await this.startPromise;
+    this.startPromise = this.startListening();
+    try {
+      return await this.startPromise;
+    } finally {
+      this.startPromise = void 0;
+    }
+  }
+  async open() {
+    await this.openURL(await this.start());
+  }
+  async createBrowserLaunch() {
+    await this.start();
+    if (!this.origin) throw new Error("Inspector window did not start");
+    this.pruneBrowserCredentials();
+    const code = randomBytes(24).toString("base64url");
+    const expiresAt = Date.now() + BROWSER_LAUNCH_TTL_MS;
+    this.browserLaunches.set(code, expiresAt);
+    const url2 = new URL("/launch", this.origin);
+    url2.searchParams.set("code", code);
+    return { url: url2.toString(), expiresAt: new Date(expiresAt).toISOString() };
+  }
+  async close() {
+    const server = this.server;
+    this.server = void 0;
+    this.origin = void 0;
+    this.browserLaunches.clear();
+    this.browserSessions.clear();
+    if (!server) return;
+    await new Promise((resolve, reject) => {
+      server.close((error51) => error51 ? reject(error51) : resolve());
+    });
+  }
+  async startListening() {
+    const assets = await this.loadAssets();
+    const server = createServer((request2, response) => {
+      void this.handle(request2, response, assets).catch((error51) => {
+        if (response.headersSent) {
+          response.destroy();
+          return;
+        }
+        sendJSON(response, 500, {
+          error: error51 instanceof Error ? error51.message : "Inspector request failed"
+        });
+      });
+    });
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => {
+        server.off("error", reject);
+        resolve();
+      });
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      server.close();
+      throw new Error("Inspector window did not obtain a loopback port");
+    }
+    this.server = server;
+    this.origin = `http://127.0.0.1:${address.port}`;
+    return `${this.origin}/#token=${this.token}`;
+  }
+  async handle(request2, response, assets) {
+    const origin = this.origin;
+    if (!origin) {
+      sendJSON(response, 503, { error: "Inspector window is starting" });
+      return;
+    }
+    const expectedHost = new URL(origin).host;
+    if (request2.headers.host !== expectedHost) {
+      sendJSON(response, 421, { error: "Invalid inspector host" });
+      return;
+    }
+    const url2 = new URL(request2.url ?? "/", origin);
+    if (request2.method === "GET" && url2.pathname === "/launch") {
+      const code = url2.searchParams.get("code") ?? "";
+      const expiresAt = this.browserLaunches.get(code);
+      this.browserLaunches.delete(code);
+      if (!expiresAt || expiresAt < Date.now()) {
+        sendJSON(response, 401, { error: "Inspector launch link expired" });
+        return;
+      }
+      const session = randomBytes(32).toString("base64url");
+      this.browserSessions.set(session, Date.now() + BROWSER_SESSION_TTL_MS);
+      send(response, 303, "", "text/plain", {
+        Location: "/",
+        "Set-Cookie": `${SESSION_COOKIE}=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.floor(BROWSER_SESSION_TTL_MS / 1e3)}`
+      });
+      return;
+    }
+    if (request2.method === "GET" && url2.pathname === "/") {
+      response.setHeader(
+        "Content-Security-Policy",
+        "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+      );
+      send(response, 200, assets.template, "text/html");
+      return;
+    }
+    if (request2.method === "GET" && url2.pathname === "/app.js") {
+      send(response, 200, assets.script, "text/javascript");
+      return;
+    }
+    if (!url2.pathname.startsWith("/api/")) {
+      sendJSON(response, 404, { error: "Not found" });
+      return;
+    }
+    if (!this.authorized(request2)) {
+      sendJSON(response, 401, { error: "Inspector authorization failed" });
+      return;
+    }
+    if (request2.method === "POST" && request2.headers.origin !== origin) {
+      sendJSON(response, 403, { error: "Inspector origin check failed" });
+      return;
+    }
+    if (request2.method === "GET" && url2.pathname === "/api/snapshot") {
+      sendJSON(response, 200, await this.backend.preview());
+      return;
+    }
+    if (request2.method === "POST" && url2.pathname === "/api/inspect") {
+      const body = await readJSON(request2);
+      const x = body.x;
+      const y = body.y;
+      if (typeof x !== "number" || typeof y !== "number" || x < 0 || x > 1 || y < 0 || y > 1) {
+        sendJSON(response, 400, { error: "Inspect coordinates must be between 0 and 1" });
+        return;
+      }
+      sendJSON(response, 200, await this.backend.inspect(x, y));
+      return;
+    }
+    if (request2.method === "POST" && url2.pathname === "/api/review") {
+      const body = await readJSON(request2);
+      const selectedViewID = body.selectedViewID;
+      const note = body.note;
+      if (typeof selectedViewID !== "string" || typeof note !== "string" || note.length > 8e3) {
+        sendJSON(response, 400, { error: "Review requires a view id and note up to 8,000 characters" });
+        return;
+      }
+      sendJSON(response, 200, await this.backend.saveReview(selectedViewID, note));
+      return;
+    }
+    sendJSON(response, 404, { error: "Not found" });
+  }
+  authorized(request2) {
+    const authorization = request2.headers.authorization;
+    if (authorization?.startsWith("Bearer ")) {
+      const supplied = Buffer.from(authorization.slice("Bearer ".length));
+      const expected = Buffer.from(this.token);
+      if (supplied.length === expected.length && timingSafeEqual(supplied, expected)) return true;
+    }
+    this.pruneBrowserCredentials();
+    const cookies = request2.headers.cookie?.split(";") ?? [];
+    const session = cookies.map((cookie) => cookie.trim().split("=", 2)).find(([name]) => name === SESSION_COOKIE)?.[1];
+    if (!session) return false;
+    const expiresAt = this.browserSessions.get(session);
+    return typeof expiresAt === "number" && expiresAt >= Date.now();
+  }
+  pruneBrowserCredentials() {
+    const now = Date.now();
+    for (const [code, expiresAt] of this.browserLaunches) {
+      if (expiresAt < now) this.browserLaunches.delete(code);
+    }
+    for (const [session, expiresAt] of this.browserSessions) {
+      if (expiresAt < now) this.browserSessions.delete(session);
+    }
+  }
+};
+
 // packages/mcp/src/server.ts
-var VERSION = "0.1.0";
-var RESOURCE_URI = `ui://appkit-inspector/${VERSION}/preview.html`;
+var VERSION = "0.1.1";
+var RESOURCE_REVISION = true ? "9349fc030951886b" : "development";
+function installedPluginVersion() {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(new URL("../.codex-plugin/plugin.json", import.meta.url), "utf8")
+    );
+    if (typeof manifest.version === "string" && manifest.version.length > 0) {
+      return manifest.version;
+    }
+  } catch {
+  }
+  return VERSION;
+}
+var RESOURCE_URI = `ui://appkit-inspector/${encodeURIComponent(installedPluginVersion())}/${RESOURCE_REVISION}/preview.html`;
 var RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
 function toolResult(text, structuredContent, isError = false) {
   return {
@@ -29395,22 +29656,51 @@ function outputMetadata(visibility, resource = false) {
   return {
     ui: {
       ...resource ? { resourceUri: RESOURCE_URI } : {},
-      visibility: [visibility]
+      visibility: Array.isArray(visibility) ? visibility : [visibility]
     },
     ...resource ? { "ui/resourceUri": RESOURCE_URI, "openai/outputTemplate": RESOURCE_URI } : {},
     "openai/widgetAccessible": true
   };
 }
-function inlinePreview(template, script, initialState) {
+function inlinePreview(template, script) {
   const safeScript = script.replace(/<\/script/gi, "<\\/script");
-  const bootstrap = `<script>window.__APPKIT_INSPECTOR_INITIAL_STATE__=${JSON.stringify(initialState).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029")};</script>`;
-  return template.replace(
-    '<script type="module" src="./app.js"></script>',
-    `${bootstrap}<script type="module">${safeScript}</script>`
-  );
+  const bundledApp = `<script type="module">${safeScript}</script>`;
+  return template.replace('<script type="module" src="./app.js"></script>', () => bundledApp);
 }
 var InspectorSession = class {
   selectedTarget;
+  async launchState() {
+    const targets = await this.targets();
+    const selected = this.selectedTarget ? targets.find((target) => target.pid === this.selectedTarget?.pid) : targets.length === 1 ? targets[0] : void 0;
+    if (!selected) {
+      delete this.selectedTarget;
+      return { connected: false };
+    }
+    this.selectedTarget = selected;
+    return { connected: true, target: publicTarget(selected) };
+  }
+  async liveSnapshot() {
+    if (this.selectedTarget) {
+      try {
+        return {
+          target: this.selectedTarget,
+          snapshot: await requestSnapshot(this.selectedTarget)
+        };
+      } catch {
+        delete this.selectedTarget;
+      }
+    }
+    const targets = await this.targets();
+    if (targets.length !== 1 || !targets[0]) return void 0;
+    try {
+      const target = targets[0];
+      const snapshot = await requestSnapshot(target);
+      this.selectedTarget = target;
+      return { target, snapshot };
+    } catch {
+      return void 0;
+    }
+  }
   async targets() {
     return await discoverTargets();
   }
@@ -29427,16 +29717,16 @@ var InspectorSession = class {
     return target;
   }
   async preview() {
-    if (!this.selectedTarget) {
-      return { connected: false, isMock: true, snapshot: mockSnapshot() };
-    }
+    const live = await this.liveSnapshot();
+    if (!live) return { connected: false, isMock: true, snapshot: mockSnapshot() };
     return {
       connected: true,
       isMock: false,
-      snapshot: await requestSnapshot(this.selectedTarget)
+      snapshot: live.snapshot
     };
   }
   async inspect(x, y) {
+    if (!this.selectedTarget) await this.liveSnapshot();
     const selected = this.selectedTarget ? await requestInspectPoint(this.selectedTarget, x, y) : inspectMockPoint(x, y);
     return {
       connected: Boolean(this.selectedTarget),
@@ -29445,9 +29735,55 @@ var InspectorSession = class {
       selected
     };
   }
+  async saveReview(selectedViewID, note) {
+    const { snapshot } = await this.preview();
+    const imageDataURL = snapshot.imageDataURL;
+    const match = /^data:image\/(png|svg\+xml);base64,([A-Za-z0-9+/=]+)$/.exec(imageDataURL);
+    if (!match?.[1] || !match[2]) throw new Error("Unsupported review image data URL");
+    const directory = await mkdtemp(join3(tmpdir(), "appkit-inspector-review-"));
+    await chmod(directory, 448);
+    const extension = match[1] === "png" ? "png" : "svg";
+    const imagePath = join3(directory, `review-${randomUUID()}.${extension}`);
+    const contextPath = join3(directory, "context.json");
+    await writeFile(imagePath, Buffer.from(match[2], "base64"), { mode: 384 });
+    await writeFile(
+      contextPath,
+      JSON.stringify({ selectedViewID, note, createdAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
+      { mode: 384 }
+    );
+    return { imagePath, contextPath };
+  }
 };
-function createServer(session = new InspectorSession()) {
+function createServer2(session = new InspectorSession(), inspectorWindow = new InspectorWindowServer(session), options = {}) {
   const server = new McpServer({ name: "AppKit Inspector", version: VERSION });
+  const experimentalFullscreenEnabled = options.enableExperimentalFullscreen ?? process.env.APPKIT_INSPECTOR_EXPERIMENTAL_FULLSCREEN === "1";
+  const fullscreenLaunches = /* @__PURE__ */ new Set();
+  const closeServer = server.close.bind(server);
+  server.server.setRequestHandler(
+    "ui/resource-teardown",
+    { params: external_exports.object({}), result: external_exports.record(external_exports.string(), external_exports.unknown()) },
+    async () => {
+      return {};
+    }
+  );
+  server.close = async () => {
+    fullscreenLaunches.clear();
+    await inspectorWindow.close?.();
+    await closeServer();
+  };
+  const prepareBrowserLaunch = async () => {
+    if (!inspectorWindow.createBrowserLaunch) {
+      return toolResult("This Inspector build cannot create a Browser session.", {}, true);
+    }
+    const [state, launch] = await Promise.all([
+      session.launchState(),
+      inspectorWindow.createBrowserLaunch()
+    ]);
+    return toolResult(
+      "Prepared AppKit Inspector for Codex Browser. Open browserURL immediately; it expires in 60 seconds.",
+      { ...state, browserURL: launch.url, expiresAt: launch.expiresAt }
+    );
+  };
   server.registerTool(
     "list_appkit_targets",
     {
@@ -29484,17 +29820,88 @@ function createServer(session = new InspectorSession()) {
   server.registerTool(
     "open_appkit_inspector",
     {
-      title: "Open AppKit Inspector",
-      description: "Open the interactive AppKit preview. Connect a live target first, or omit it to explore the mock interface.",
+      title: "Open AppKit Inspector in Codex Browser",
+      description: "Prepare a short-lived, single-use AppKit Inspector URL for the current Codex Browser panel. This is the default presentation path and never opens fullscreen or an external browser automatically.",
       inputSchema: {},
-      _meta: outputMetadata("model", true)
+      _meta: outputMetadata("model")
+    },
+    prepareBrowserLaunch
+  );
+  server.registerTool(
+    "prepare_appkit_inspector_browser",
+    {
+      title: "Prepare AppKit Inspector Browser",
+      description: "Backward-compatible alias that prepares the same short-lived Codex Browser URL as open_appkit_inspector.",
+      inputSchema: {},
+      _meta: outputMetadata(["model", "app"])
+    },
+    prepareBrowserLaunch
+  );
+  if (experimentalFullscreenEnabled) {
+    server.registerTool(
+      "open_appkit_inspector_fullscreen",
+      {
+        title: "Open experimental AppKit Inspector fullscreen launcher",
+        description: "Open the experimental MCP App launcher for an explicitly requested fullscreen test. It never opens an external browser or window automatically.",
+        inputSchema: {},
+        _meta: outputMetadata("model", true)
+      },
+      async () => {
+        const state = await session.launchState();
+        return toolResult(
+          !state.connected ? "Opened the experimental fullscreen launcher with the built-in mock target." : `Opened the experimental fullscreen launcher for ${state.target?.name ?? "the connected target"}.`,
+          state
+        );
+      }
+    );
+    server.registerTool(
+      "begin_appkit_inspector_fullscreen",
+      {
+        title: "Begin experimental AppKit Inspector fullscreen",
+        description: "Start an explicitly requested fullscreen transition. Failure remains in the launcher and never opens an external window automatically.",
+        inputSchema: {},
+        _meta: outputMetadata("app")
+      },
+      async () => {
+        const state = await session.launchState();
+        fullscreenLaunches.clear();
+        const launchID = randomUUID();
+        fullscreenLaunches.add(launchID);
+        return toolResult("Started experimental AppKit Inspector fullscreen launch.", {
+          ...state,
+          launchID
+        });
+      }
+    );
+    server.registerTool(
+      "confirm_appkit_inspector_fullscreen",
+      {
+        title: "Confirm experimental AppKit Inspector fullscreen",
+        description: "Confirm that the explicitly requested fullscreen Inspector rendered successfully.",
+        inputSchema: { launchID: external_exports.string().uuid() },
+        _meta: outputMetadata("app")
+      },
+      async ({ launchID }) => {
+        const confirmed = fullscreenLaunches.delete(launchID);
+        return toolResult(
+          confirmed ? "Confirmed experimental AppKit Inspector fullscreen." : "Fullscreen confirmation did not match an active launch.",
+          { confirmed }
+        );
+      }
+    );
+  }
+  server.registerTool(
+    "open_appkit_inspector_window",
+    {
+      title: "Reopen AppKit Inspector window",
+      description: "Explicitly open the authenticated Inspector in the system default browser. Use only when the user requests it or chooses it after the Codex Browser fails.",
+      inputSchema: {},
+      _meta: outputMetadata(["model", "app"])
     },
     async () => {
-      const state = await session.preview();
-      return toolResult(
-        state.isMock ? "Opened AppKit Inspector with the built-in mock target." : `Opened AppKit Inspector for ${state.snapshot.target.name}.`,
-        state
-      );
+      const state = await session.launchState();
+      await inspectorWindow.open();
+      return toolResult("Opened the separate local Inspector window.", state);
     }
   );
   server.registerTool(
@@ -29544,21 +29951,7 @@ function createServer(session = new InspectorSession()) {
       _meta: outputMetadata("app")
     },
     async ({ selectedViewID, note }) => {
-      const { snapshot } = await session.preview();
-      const imageDataURL = snapshot.imageDataURL;
-      const match = /^data:image\/(png|svg\+xml);base64,([A-Za-z0-9+/=]+)$/.exec(imageDataURL);
-      if (!match?.[1] || !match[2]) throw new Error("Unsupported review image data URL");
-      const directory = await mkdtemp(join2(tmpdir(), "appkit-inspector-review-"));
-      await chmod(directory, 448);
-      const extension = match[1] === "png" ? "png" : "svg";
-      const imagePath = join2(directory, `review-${randomUUID()}.${extension}`);
-      const contextPath = join2(directory, "context.json");
-      await writeFile(imagePath, Buffer.from(match[2], "base64"), { mode: 384 });
-      await writeFile(
-        contextPath,
-        JSON.stringify({ selectedViewID, note, createdAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
-        { mode: 384 }
-      );
+      const { imagePath, contextPath } = await session.saveReview(selectedViewID, note);
       return toolResult("Saved local AppKit review artifacts.", { imagePath, contextPath });
     }
   );
@@ -29570,22 +29963,21 @@ function createServer(session = new InspectorSession()) {
       mimeType: RESOURCE_MIME_TYPE
     },
     async (uri) => {
-      const directory = fileURLToPath(new URL(".", import.meta.url));
+      const directory = fileURLToPath2(new URL(".", import.meta.url));
       const [template, script] = await Promise.all([
-        readFile2(join2(directory, "preview.html"), "utf8"),
-        readFile2(join2(directory, "app.js"), "utf8")
+        readFile3(join3(directory, "preview.html"), "utf8"),
+        readFile3(join3(directory, "app.js"), "utf8")
       ]);
-      const initialState = await session.preview();
       return {
         contents: [
           {
             uri: uri.toString(),
             mimeType: RESOURCE_MIME_TYPE,
-            text: inlinePreview(template, script, initialState),
+            text: inlinePreview(template, script),
             _meta: {
               ui: { csp: { connectDomains: [], resourceDomains: [] } },
               "openai/widgetPrefersBorder": false,
-              "openai/widgetMinFrameHeight": 640
+              "openai/widgetMinFrameHeight": 140
             }
           }
         ]
@@ -29595,15 +29987,16 @@ function createServer(session = new InspectorSession()) {
   return server;
 }
 async function runServer() {
-  serveStdio(() => createServer(), {
+  serveStdio(() => createServer2(), {
     onerror: (error51) => console.error(error51)
   });
 }
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (process.argv[1] && fileURLToPath2(import.meta.url) === process.argv[1]) {
   await runServer();
 }
 export {
-  createServer,
+  InspectorSession,
+  createServer2 as createServer,
   flattenViews,
   runServer
 };

@@ -8,4 +8,4 @@ check:
 	npm run check
 
 demo:
-	swift run --package-path native AppKitInspectorDemo
+	swift run AppKitInspectorDemo
