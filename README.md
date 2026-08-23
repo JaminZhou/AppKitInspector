@@ -54,7 +54,9 @@ make demo
 Start a new Codex task so it loads the newly installed MCP tools, then ask:
 
 ```text
-Use AppKit Inspector to connect to the running demo and open it in Codex Browser.
+Use AppKit Inspector to connect to the running demo and open it in Codex Browser. The workflow
+explicitly presents the right Browser panel after navigation. In the Inspector, use **Fit**, **−**,
+and **+** to resize the snapshot; trackpad pinch and Command-modified scrolling also zoom.
 ```
 
 The default `open_appkit_inspector` tool creates a 60-second, single-use loopback URL for the

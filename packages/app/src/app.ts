@@ -1,5 +1,13 @@
 import { App } from "@modelcontextprotocol/ext-apps";
 import { LocalInspectorClient, standaloneConnection } from "./local-client.js";
+import {
+  MAX_ZOOM,
+  MIN_ZOOM,
+  fitZoom,
+  normalizedPoint,
+  scaledZoom,
+  steppedZoom,
+} from "./viewport.js";
 
 type Rect = { x: number; y: number; width: number; height: number };
 type Node = {
@@ -55,6 +63,10 @@ let launchState: LaunchState | undefined;
 let loading = false;
 let opening = false;
 let fullscreenActive = false;
+let zoomMode: "fit" | "manual" = "fit";
+let manualZoom = 1;
+let fittedZoom = 1;
+let zoomObserver: ResizeObserver | undefined;
 
 function isState(value: unknown): value is State {
   if (!value || typeof value !== "object") return false;
@@ -129,6 +141,79 @@ function targetLabel(): string {
   return "Preparing inspector session…";
 }
 
+function effectiveZoom(): number {
+  return zoomMode === "fit" ? fittedZoom : manualZoom;
+}
+
+function applyZoomLayout(root: HTMLDivElement, snapshot: Snapshot): void {
+  const stage = root.querySelector<HTMLElement>(".stage");
+  const screen = root.querySelector<HTMLElement>(".screen");
+  const output = root.querySelector<HTMLOutputElement>("#zoom-value");
+  const fit = root.querySelector<HTMLButtonElement>("#zoom-fit");
+  const zoomOut = root.querySelector<HTMLButtonElement>("#zoom-out");
+  const zoomIn = root.querySelector<HTMLButtonElement>("#zoom-in");
+  if (!stage || !screen) return;
+
+  fittedZoom = fitZoom(
+    { width: stage.clientWidth, height: stage.clientHeight },
+    { width: snapshot.window.frame.width, height: snapshot.window.frame.height },
+  );
+  const zoom = effectiveZoom();
+  screen.style.width = `${snapshot.window.frame.width * zoom}px`;
+  screen.style.height = `${snapshot.window.frame.height * zoom}px`;
+  if (output) output.textContent = `${Math.round(zoom * 100)}%`;
+  fit?.setAttribute("aria-pressed", String(zoomMode === "fit"));
+  if (zoomOut) zoomOut.disabled = zoom <= MIN_ZOOM;
+  if (zoomIn) zoomIn.disabled = zoom >= MAX_ZOOM;
+}
+
+function setManualZoom(root: HTMLDivElement, snapshot: Snapshot, nextZoom: number): void {
+  const stage = root.querySelector<HTMLElement>(".stage");
+  const horizontalPosition = stage && stage.scrollWidth > 0
+    ? (stage.scrollLeft + stage.clientWidth / 2) / stage.scrollWidth
+    : 0.5;
+  const verticalPosition = stage && stage.scrollHeight > 0
+    ? (stage.scrollTop + stage.clientHeight / 2) / stage.scrollHeight
+    : 0.5;
+  manualZoom = nextZoom;
+  zoomMode = "manual";
+  applyZoomLayout(root, snapshot);
+  window.requestAnimationFrame(() => {
+    if (!stage) return;
+    stage.scrollLeft = horizontalPosition * stage.scrollWidth - stage.clientWidth / 2;
+    stage.scrollTop = verticalPosition * stage.scrollHeight - stage.clientHeight / 2;
+  });
+}
+
+function updateZoom(root: HTMLDivElement, snapshot: Snapshot, direction: "in" | "out"): void {
+  setManualZoom(root, snapshot, steppedZoom(effectiveZoom(), direction));
+}
+
+function installZoomControls(root: HTMLDivElement, snapshot: Snapshot): void {
+  zoomObserver?.disconnect();
+  const stage = root.querySelector<HTMLElement>(".stage");
+  if (!stage) return;
+
+  applyZoomLayout(root, snapshot);
+  zoomObserver = new ResizeObserver(() => applyZoomLayout(root, snapshot));
+  zoomObserver.observe(stage);
+  root.querySelector<HTMLButtonElement>("#zoom-out")?.addEventListener("click", () => {
+    updateZoom(root, snapshot, "out");
+  });
+  root.querySelector<HTMLButtonElement>("#zoom-in")?.addEventListener("click", () => {
+    updateZoom(root, snapshot, "in");
+  });
+  root.querySelector<HTMLButtonElement>("#zoom-fit")?.addEventListener("click", () => {
+    zoomMode = "fit";
+    applyZoomLayout(root, snapshot);
+  });
+  stage.addEventListener("wheel", (event) => {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    setManualZoom(root, snapshot, scaledZoom(effectiveZoom(), event.deltaY));
+  }, { passive: false });
+}
+
 function renderLauncher(root: HTMLDivElement): void {
   const disabled = !bridgeConnected || opening;
   root.innerHTML = `
@@ -181,14 +266,22 @@ function renderWorkspace(root: HTMLDivElement): void {
         <span class="spacer"></span>
         ${!isLocalSurface ? '<button type="button" id="open-window">Open Window</button>' : ""}
         ${!isLocalSurface ? '<button type="button" id="close-fullscreen">Close</button>' : ""}
+        <div class="zoom-controls" role="group" aria-label="Snapshot zoom">
+          <button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom Out">−</button>
+          <button type="button" id="zoom-fit" aria-label="Fit snapshot" aria-pressed="true" title="Fit Snapshot">Fit</button>
+          <output id="zoom-value" aria-live="polite">100%</output>
+          <button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom In">+</button>
+        </div>
         <button type="button" id="refresh" aria-label="Refresh snapshot">Refresh</button>
       </header>
       <section class="content">
-        <div class="stage">
-          <div class="screen">
-            <img src="${snapshot.imageDataURL}" alt="${escapeHTML(snapshot.window.title)} app snapshot" draggable="false" />
-            ${node ? `<div class="highlight" style="${highlightStyle(node, snapshot)}"></div>` : ""}
-            <button type="button" class="hit-surface" aria-label="Select a view in the application snapshot"></button>
+        <div class="stage" aria-label="Application snapshot canvas">
+          <div class="canvas">
+            <div class="screen">
+              <img src="${snapshot.imageDataURL}" alt="${escapeHTML(snapshot.window.title)} app snapshot" draggable="false" />
+              ${node ? `<div class="highlight" style="${highlightStyle(node, snapshot)}"></div>` : ""}
+              <button type="button" class="hit-surface" aria-label="Select a view in the application snapshot"></button>
+            </div>
           </div>
         </div>
         <aside class="inspector">
@@ -210,11 +303,13 @@ function renderWorkspace(root: HTMLDivElement): void {
   root.querySelector<HTMLButtonElement>("#close-fullscreen")?.addEventListener("click", () => {
     void closeFullscreen();
   });
+  installZoomControls(root, snapshot);
   root.querySelector<HTMLButtonElement>(".hit-surface")?.addEventListener("click", (event) => {
     const surface = event.currentTarget as HTMLElement;
     const bounds = surface.getBoundingClientRect();
-    if (bounds.width <= 0 || bounds.height <= 0) return;
-    void inspect((event.clientX - bounds.left) / bounds.width, (event.clientY - bounds.top) / bounds.height);
+    const point = normalizedPoint(bounds, { x: event.clientX, y: event.clientY });
+    if (!point) return;
+    void inspect(point.x, point.y);
   });
   root.querySelectorAll<HTMLButtonElement>("[data-view-id]").forEach((button) => {
     button.addEventListener("click", () => {

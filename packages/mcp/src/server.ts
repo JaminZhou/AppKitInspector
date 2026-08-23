@@ -234,7 +234,7 @@ export function createServer(
       inspectorWindow.createBrowserLaunch(),
     ]);
     return toolResult(
-      "Prepared AppKit Inspector for Codex Browser. Open browserURL immediately; it expires in 60 seconds.",
+      "Prepared AppKit Inspector for Codex Browser. Open browserURL immediately, then set Codex Browser visibility to true; the URL expires in 60 seconds.",
       { ...state, browserURL: launch.url, expiresAt: launch.expiresAt },
     );
   };
@@ -279,7 +279,7 @@ export function createServer(
     {
       title: "Open AppKit Inspector in Codex Browser",
       description:
-        "Prepare a short-lived, single-use AppKit Inspector URL for the current Codex Browser panel. This is the default presentation path and never opens fullscreen or an external browser automatically.",
+        "Prepare a short-lived, single-use AppKit Inspector URL for the current Codex Browser panel. The caller must open the URL and set Browser visibility to true. This is the default presentation path and never opens fullscreen or an external browser automatically.",
       inputSchema: {},
       _meta: outputMetadata("model"),
     },
