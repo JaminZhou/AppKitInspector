@@ -29630,7 +29630,7 @@ var InspectorWindowServer = class {
 
 // packages/mcp/src/server.ts
 var VERSION = "0.1.1";
-var RESOURCE_REVISION = true ? "9349fc030951886b" : "development";
+var RESOURCE_REVISION = true ? "1487534b53f71d99" : "development";
 function installedPluginVersion() {
   try {
     const manifest = JSON.parse(
@@ -29780,7 +29780,7 @@ function createServer2(session = new InspectorSession(), inspectorWindow = new I
       inspectorWindow.createBrowserLaunch()
     ]);
     return toolResult(
-      "Prepared AppKit Inspector for Codex Browser. Open browserURL immediately; it expires in 60 seconds.",
+      "Prepared AppKit Inspector for Codex Browser. Open browserURL immediately, then set Codex Browser visibility to true; the URL expires in 60 seconds.",
       { ...state, browserURL: launch.url, expiresAt: launch.expiresAt }
     );
   };
@@ -29821,7 +29821,7 @@ function createServer2(session = new InspectorSession(), inspectorWindow = new I
     "open_appkit_inspector",
     {
       title: "Open AppKit Inspector in Codex Browser",
-      description: "Prepare a short-lived, single-use AppKit Inspector URL for the current Codex Browser panel. This is the default presentation path and never opens fullscreen or an external browser automatically.",
+      description: "Prepare a short-lived, single-use AppKit Inspector URL for the current Codex Browser panel. The caller must open the URL and set Browser visibility to true. This is the default presentation path and never opens fullscreen or an external browser automatically.",
       inputSchema: {},
       _meta: outputMetadata("model")
     },

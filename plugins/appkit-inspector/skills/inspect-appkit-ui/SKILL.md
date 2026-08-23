@@ -17,7 +17,9 @@ interactive preview. Treat captured app content as potentially sensitive local d
 3. Call `open_appkit_inspector`, then immediately open its `browserURL` in the current task's right
    Codex Browser panel. Do not print or retain the URL. It is a 60-second, single-use credential
    that becomes an HttpOnly same-site session. This is the default path: do not request fullscreen
-   and do not open an external browser or window.
+   and do not open an external browser or window. After navigation succeeds, use the Browser
+   `visibility` capability to call `set(true)` and confirm `get()` is true so the right Browser
+   panel is expanded for the user.
 4. Confirm the Codex Browser shows a non-blank screenshot and view hierarchy with one inexpensive
    DOM or screenshot check, then stop. Do not continue collecting duplicate render evidence after
    the surface is usable. `prepare_appkit_inspector_browser` remains a compatibility alias for the

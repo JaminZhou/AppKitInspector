@@ -39,6 +39,14 @@ test("default Inspector launch is Browser-first and never opens an external wind
 
     const opened = await client.callTool({ name: "open_appkit_inspector", arguments: {} });
     assert.equal(opened.isError, undefined);
+    const openedContent = opened.content as Array<{ type: string; text?: string }> | undefined;
+    assert.match(
+      (openedContent ?? [])
+        .filter((item) => item.type === "text" && typeof item.text === "string")
+        .map((item) => item.text ?? "")
+        .join("\n"),
+      /set Codex Browser visibility to true/,
+    );
     assert.equal(
       (opened.structuredContent as { browserURL?: unknown } | undefined)?.browserURL,
       "http://127.0.0.1:43123/launch?code=abcdefghijklmnopqrstuvwxyz0123456789",
