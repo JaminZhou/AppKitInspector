@@ -39,6 +39,11 @@
       .zoom-controls button { min-width: 28px; padding-inline: 7px; }
       .zoom-controls button[aria-pressed="true"] { background: var(--selection); border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); }
       .zoom-controls output { width: 42px; color: var(--muted); font-variant-numeric: tabular-nums; text-align: center; }
+      .scope-controls { flex: none; display: flex; align-items: center; gap: 0; }
+      .scope-controls button { border-radius: 0; }
+      .scope-controls button:first-child { border-radius: 7px 0 0 7px; }
+      .scope-controls button:last-child { margin-left: -1px; border-radius: 0 7px 7px 0; }
+      .scope-controls button[aria-pressed="true"] { position: relative; color: white; border-color: var(--accent); background: var(--accent); }
       .launcher { min-height: 0; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 16px; }
       .launcher > div:first-child { min-width: 0; display: grid; gap: 4px; }
       .launcher strong { font-size: 13px; }

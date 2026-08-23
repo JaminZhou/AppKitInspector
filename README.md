@@ -4,8 +4,9 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 AppKit Inspector is a Debug-only bridge for inspecting a live native macOS AppKit interface from
-Codex. It captures the application's content view in-process, maps a clicked point to its `NSView`,
-shows hierarchy and geometry, and prepares precise visual feedback for a coding task.
+Codex. It captures the application's complete window frame or content view in-process, maps a
+clicked point to its `NSView`, shows hierarchy and geometry, and prepares precise visual feedback
+for a coding task.
 
 > **Public Preview:** APIs, plugin packaging, and presentation behavior may change before 1.0.
 > Codex Browser is the supported default surface. Fullscreen remains experimental and disabled by
@@ -13,7 +14,8 @@ shows hierarchy and geometry, and prepares precise visual feedback for a coding 
 
 ## Features
 
-- Inspect a real AppKit window without Accessibility or Screen Recording permission.
+- Inspect a real AppKit window frame, title bar, traffic-light controls, toolbar, and content without
+  Accessibility or Screen Recording permission.
 - Click the captured interface and identify the deepest native `NSView`.
 - Review class names, frames, accessibility metadata, and ancestor paths.
 - Copy a feedback package containing the selected view, geometry, note, and private local artifacts.
@@ -57,6 +59,7 @@ Start a new Codex task so it loads the newly installed MCP tools, then ask:
 Use AppKit Inspector to connect to the running demo and open it in Codex Browser. The workflow
 explicitly presents the right Browser panel after navigation. In the Inspector, use **Fit**, **−**,
 and **+** to resize the snapshot; trackpad pinch and Command-modified scrolling also zoom.
+Use **Window** for title-bar and frame annotations or **Content** for a focused content-only view.
 ```
 
 The default `open_appkit_inspector` tool creates a 60-second, single-use loopback URL for the

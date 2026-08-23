@@ -25,7 +25,8 @@ interactive preview. Treat captured app content as potentially sensitive local d
    the surface is usable. `prepare_appkit_inspector_browser` remains a compatibility alias for the
    same Browser launch.
 5. In the active Inspector surface, use screenshot point-selection, hierarchy, geometry, and
-   feedback. `Copy for
+   feedback. Keep **Window** selected when reviewing the title bar, toolbar, traffic-light controls,
+   or content-to-frame spacing; switch to **Content** when only application content matters. `Copy for
    Codex` saves private local review artifacts and copies a ready-to-paste review message.
 6. When the user pastes a selected view back to chat, inspect the supplied view class, hierarchy,
    frame, snapshot path, and note. Locate the corresponding implementation in the target repository
@@ -59,5 +60,7 @@ interactive preview. Treat captured app content as potentially sensitive local d
   `APPKIT_INSPECTOR_EXPERIMENTAL_FULLSCREEN=1`. A fullscreen failure must remain in the launcher; it
   must not trigger an external browser fallback.
 - Separate window fails: report the MCP error, current target PID, and loaded plugin version.
-- Missing title-bar controls: explain that content-view capture intentionally excludes WindowServer
-  chrome; use a separate active-window screenshot only when that evidence is required.
+- Window mode falls back to Content: rebuild and restart the Debug target against the current probe.
+  Schema-one targets remain readable but cannot expose title-bar controls.
+- Missing shadows or occlusion: explain that Window mode captures the in-process AppKit frame view,
+  not WindowServer shadows, other applications, or occlusion state.

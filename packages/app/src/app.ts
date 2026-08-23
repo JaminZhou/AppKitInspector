@@ -1,5 +1,9 @@
 import { App } from "@modelcontextprotocol/ext-apps";
-import { LocalInspectorClient, standaloneConnection } from "./local-client.js";
+import {
+  type CaptureScope,
+  LocalInspectorClient,
+  standaloneConnection,
+} from "./local-client.js";
 import {
   MAX_ZOOM,
   MIN_ZOOM,
@@ -20,7 +24,12 @@ type Node = {
 };
 type Snapshot = {
   target: { name: string; pid: number };
-  window: { title: string; frame: Rect };
+  window: {
+    title: string;
+    frame: Rect;
+    contentFrame?: Rect;
+    captureScope?: CaptureScope;
+  };
   imageDataURL: string;
   root: Node;
 };
@@ -67,6 +76,7 @@ let zoomMode: "fit" | "manual" = "fit";
 let manualZoom = 1;
 let fittedZoom = 1;
 let zoomObserver: ResizeObserver | undefined;
+let captureScope: CaptureScope = "windowFrame";
 
 function isState(value: unknown): value is State {
   if (!value || typeof value !== "object") return false;
@@ -139,6 +149,10 @@ function targetLabel(): string {
   if (target) return `${target.name} · pid ${target.pid}`;
   if (launchState?.connected === false) return "Built-in mock target";
   return "Preparing inspector session…";
+}
+
+function snapshotCaptureScope(snapshot: Snapshot): CaptureScope {
+  return snapshot.window.captureScope ?? "content";
 }
 
 function effectiveZoom(): number {
@@ -250,6 +264,7 @@ function renderWorkspace(root: HTMLDivElement): void {
     return;
   }
   const snapshot = state.snapshot;
+  const actualScope = snapshotCaptureScope(snapshot);
   const node = selectedNode ?? state.selected?.node;
   const treeRows = rows(snapshot.root)
     .map(
@@ -266,6 +281,10 @@ function renderWorkspace(root: HTMLDivElement): void {
         <span class="spacer"></span>
         ${!isLocalSurface ? '<button type="button" id="open-window">Open Window</button>' : ""}
         ${!isLocalSurface ? '<button type="button" id="close-fullscreen">Close</button>' : ""}
+        <div class="scope-controls" role="group" aria-label="Snapshot area">
+          <button type="button" data-capture-scope="windowFrame" aria-pressed="${actualScope === "windowFrame"}" title="Include title bar and window controls">Window</button>
+          <button type="button" data-capture-scope="content" aria-pressed="${actualScope === "content"}" title="Show only the application content view">Content</button>
+        </div>
         <div class="zoom-controls" role="group" aria-label="Snapshot zoom">
           <button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom Out">−</button>
           <button type="button" id="zoom-fit" aria-label="Fit snapshot" aria-pressed="true" title="Fit Snapshot">Fit</button>
@@ -302,6 +321,12 @@ function renderWorkspace(root: HTMLDivElement): void {
   });
   root.querySelector<HTMLButtonElement>("#close-fullscreen")?.addEventListener("click", () => {
     void closeFullscreen();
+  });
+  root.querySelectorAll<HTMLButtonElement>("[data-capture-scope]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const scope = button.dataset.captureScope;
+      if (scope === "content" || scope === "windowFrame") void switchCaptureScope(scope);
+    });
   });
   installZoomControls(root, snapshot);
   root.querySelector<HTMLButtonElement>(".hit-surface")?.addEventListener("click", (event) => {
@@ -465,20 +490,23 @@ async function closeFullscreen(): Promise<void> {
 }
 
 async function snapshotRequest(): Promise<unknown> {
-  if (localClient) return await localClient.snapshot<State>();
-  return await callInspectorTool("appkit_snapshot");
+  if (localClient) return await localClient.snapshot<State>(captureScope);
+  return await callInspectorTool("appkit_snapshot", { scope: captureScope });
 }
 
 async function inspectRequest(x: number, y: number): Promise<unknown> {
-  if (localClient) return await localClient.inspect<State>(x, y);
-  return await callInspectorTool("appkit_inspect_point", { x, y });
+  if (localClient) return await localClient.inspect<State>(x, y, captureScope);
+  return await callInspectorTool("appkit_inspect_point", { x, y, scope: captureScope });
 }
 
 async function saveReviewRequest(selectedViewID: string, reviewNote: string): Promise<ReviewArtifacts> {
-  if (localClient) return await localClient.saveReview<ReviewArtifacts>(selectedViewID, reviewNote);
+  if (localClient) {
+    return await localClient.saveReview<ReviewArtifacts>(selectedViewID, reviewNote, captureScope);
+  }
   const output = await callInspectorTool("save_appkit_review", {
     selectedViewID,
     note: reviewNote,
+    scope: captureScope,
   });
   return (output ?? {}) as ReviewArtifacts;
 }
@@ -489,12 +517,18 @@ async function refresh(): Promise<boolean> {
   toast = "Refreshing…";
   render();
   try {
+    const requestedScope = captureScope;
     const nextState = await snapshotRequest();
     if (!isState(nextState)) throw new Error("Inspector returned an invalid snapshot");
     state = nextState;
+    captureScope = snapshotCaptureScope(nextState.snapshot);
     selectedNode = undefined;
     selectedPath = undefined;
-    toast = nextState.isMock ? "Explore the mock UI or connect a Debug target" : "Snapshot refreshed";
+    toast = requestedScope !== captureScope
+      ? "Window Frame requires a rebuilt Debug target; showing Content instead"
+      : nextState.isMock
+        ? "Explore the mock UI or connect a Debug target"
+        : `${captureScope === "windowFrame" ? "Window Frame" : "Content"} snapshot refreshed`;
     return true;
   } catch (error) {
     toast = errorMessage(error);
@@ -505,6 +539,17 @@ async function refresh(): Promise<boolean> {
   }
 }
 
+async function switchCaptureScope(scope: CaptureScope): Promise<void> {
+  if (loading || scope === captureScope) return;
+  captureScope = scope;
+  state = undefined;
+  selectedNode = undefined;
+  selectedPath = undefined;
+  toast = scope === "windowFrame" ? "Loading Window Frame…" : "Loading Content…";
+  render();
+  await refresh();
+}
+
 async function inspect(x: number, y: number): Promise<void> {
   if (!localClient && !fullscreenActive) return;
   toast = "Inspecting point…";
@@ -513,6 +558,7 @@ async function inspect(x: number, y: number): Promise<void> {
     const nextState = await inspectRequest(x, y);
     if (!isState(nextState)) throw new Error("Inspector returned an invalid selection");
     state = nextState;
+    captureScope = snapshotCaptureScope(nextState.snapshot);
     selectedNode = nextState.selected?.node;
     selectedPath = nextState.selected?.ancestorPath;
     toast = selectedNode ? `Selected ${selectedNode.className}` : "No view at that point";
@@ -553,6 +599,7 @@ async function copyForCodex(): Promise<void> {
       `View: ${node.className}`,
       `Hierarchy: ${path}`,
       `Frame: x=${node.frame.x}, y=${node.frame.y}, width=${node.frame.width}, height=${node.frame.height}`,
+      `Capture: ${captureScope === "windowFrame" ? "Window Frame" : "Content"}`,
       output.imagePath ? `Snapshot: ${output.imagePath}` : undefined,
       output.contextPath ? `Review context: ${output.contextPath}` : undefined,
     ]

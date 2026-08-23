@@ -36,6 +36,7 @@ private struct ProbeRequest: Decodable {
     let token: String
     let x: Double?
     let y: Double?
+    let scope: ProbeCaptureScope?
 }
 
 private struct SuccessResponse<Value: Encodable>: Encodable {
@@ -153,11 +154,25 @@ private final class ProbeServer: @unchecked Sendable {
                 try MainActor.assumeIsolated {
                     switch request.method {
                     case "snapshot":
-                        return try JSONEncoder().encode(SuccessResponse(result: ViewSnapshotter.snapshot(target: target)))
+                        return try JSONEncoder().encode(
+                            SuccessResponse(
+                                result: ViewSnapshotter.snapshot(
+                                    target: target,
+                                    scope: request.scope ?? .windowFrame
+                                )
+                            )
+                        )
                     case "inspectPoint":
                         guard let x = request.x, let y = request.y else { throw ProbeError.invalidRequest }
                         return try JSONEncoder().encode(
-                            SuccessResponse(result: ViewSnapshotter.inspectPoint(x: x, y: y, target: target))
+                            SuccessResponse(
+                                result: ViewSnapshotter.inspectPoint(
+                                    x: x,
+                                    y: y,
+                                    target: target,
+                                    scope: request.scope ?? .windowFrame
+                                )
+                            )
                         )
                     default:
                         throw ProbeError.invalidRequest

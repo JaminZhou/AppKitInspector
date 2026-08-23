@@ -36,6 +36,9 @@ export type ViewNode = {
   subviews: ViewNode[];
 };
 
+export const captureScopeSchema = z.enum(["content", "windowFrame"]);
+export type CaptureScope = z.infer<typeof captureScopeSchema>;
+
 export const targetSchema = z.object({
   pid: z.number().int().positive(),
   name: z.string().min(1),
@@ -48,12 +51,14 @@ export const targetSchema = z.object({
 export const publicTargetSchema = targetSchema.omit({ token: true });
 
 export const snapshotSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.union([z.literal(1), z.literal(2)]),
   target: publicTargetSchema,
   window: z.object({
     id: z.string(),
     title: z.string(),
     frame: rectSchema,
+    contentFrame: rectSchema.optional(),
+    captureScope: captureScopeSchema.optional(),
   }),
   imageDataURL: z.string().min(1),
   root: viewNodeSchema,
@@ -81,4 +86,8 @@ export function findView(root: ViewNode, id: string): ViewNode | undefined {
     if (found) return found;
   }
   return undefined;
+}
+
+export function snapshotCaptureScope(snapshot: Snapshot): CaptureScope {
+  return snapshot.window.captureScope ?? "content";
 }

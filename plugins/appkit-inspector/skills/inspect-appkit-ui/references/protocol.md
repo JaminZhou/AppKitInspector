@@ -16,9 +16,13 @@ Every request includes the discovery token. Responses are bounded to 64 MiB by t
 
 Supported methods:
 
-- `snapshot`: capture the key window content view and recursively serialize its `NSView` tree.
+- `snapshot`: capture the key window and recursively serialize its `NSView` tree. An optional
+  `scope` is `windowFrame` by default or `content` for the application content view only.
 - `inspectPoint`: convert a normalized top-left image point to AppKit coordinates and return the
-  deepest hit-tested view plus its ancestor path.
+  deepest hit-tested view plus its ancestor path. It accepts the same `scope`.
+
+Schema version 2 includes `window.captureScope` and the content rectangle relative to the captured
+root. Schema version 1 remains accepted as a content-only compatibility response.
 
 ## Inspector window
 
@@ -51,10 +55,12 @@ surface.
 ## Geometry
 
 AppKit view frames use bottom-left coordinates. The Inspector window converts them to CSS top-left
-percentages using the captured window content size. Refresh after moving or resizing the target.
+percentages using the selected capture root. Window mode uses the frame view, so title-bar buttons
+and content share one coordinate space. Refresh after moving or resizing the target.
 
 ## Capture scope
 
-The probe uses `cacheDisplay(in:to:)` inside the inspected process. It captures the application
-content without Screen Recording permission and normally excludes WindowServer title-bar chrome,
-shadows, other apps, and occlusion state.
+The probe uses `cacheDisplay(in:to:)` inside the inspected process. Window mode captures the public
+AppKit frame-view hierarchy reached from `contentView.superview`, including title-bar controls and
+toolbars; Content mode captures `contentView`. Neither mode needs Screen Recording permission. Both
+exclude WindowServer shadows, other applications, and occlusion state.

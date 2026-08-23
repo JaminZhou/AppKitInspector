@@ -8,7 +8,14 @@ import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
-import { flattenViews, type InspectResult, type Snapshot, type Target } from "./contracts.js";
+import {
+  captureScopeSchema,
+  flattenViews,
+  type CaptureScope,
+  type InspectResult,
+  type Snapshot,
+  type Target,
+} from "./contracts.js";
 import { inspectMockPoint, mockSnapshot } from "./mock.js";
 import {
   discoverTargets,
@@ -103,12 +110,14 @@ export class InspectorSession {
     return { connected: true, target: publicTarget(selected) };
   }
 
-  private async liveSnapshot(): Promise<{ target: Target; snapshot: Snapshot } | undefined> {
+  private async liveSnapshot(
+    scope: CaptureScope = "windowFrame",
+  ): Promise<{ target: Target; snapshot: Snapshot } | undefined> {
     if (this.selectedTarget) {
       try {
         return {
           target: this.selectedTarget,
-          snapshot: await requestSnapshot(this.selectedTarget),
+          snapshot: await requestSnapshot(this.selectedTarget, scope),
         };
       } catch {
         delete this.selectedTarget;
@@ -119,7 +128,7 @@ export class InspectorSession {
     if (targets.length !== 1 || !targets[0]) return undefined;
     try {
       const target = targets[0];
-      const snapshot = await requestSnapshot(target);
+      const snapshot = await requestSnapshot(target, scope);
       this.selectedTarget = target;
       return { target, snapshot };
     } catch {
@@ -146,9 +155,9 @@ export class InspectorSession {
     return target;
   }
 
-  async preview(): Promise<PreviewState> {
-    const live = await this.liveSnapshot();
-    if (!live) return { connected: false, isMock: true, snapshot: mockSnapshot() };
+  async preview(scope: CaptureScope = "windowFrame"): Promise<PreviewState> {
+    const live = await this.liveSnapshot(scope);
+    if (!live) return { connected: false, isMock: true, snapshot: mockSnapshot(scope) };
     return {
       connected: true,
       isMock: false,
@@ -156,11 +165,15 @@ export class InspectorSession {
     };
   }
 
-  async inspect(x: number, y: number): Promise<PreviewState> {
-    if (!this.selectedTarget) await this.liveSnapshot();
+  async inspect(
+    x: number,
+    y: number,
+    scope: CaptureScope = "windowFrame",
+  ): Promise<PreviewState> {
+    if (!this.selectedTarget) await this.liveSnapshot(scope);
     const selected = this.selectedTarget
-      ? await requestInspectPoint(this.selectedTarget, x, y)
-      : inspectMockPoint(x, y);
+      ? await requestInspectPoint(this.selectedTarget, x, y, scope)
+      : inspectMockPoint(x, y, scope);
     return {
       connected: Boolean(this.selectedTarget),
       isMock: !this.selectedTarget,
@@ -169,8 +182,12 @@ export class InspectorSession {
     };
   }
 
-  async saveReview(selectedViewID: string | undefined, note: string): Promise<ReviewArtifacts> {
-    const { snapshot } = await this.preview();
+  async saveReview(
+    selectedViewID: string | undefined,
+    note: string,
+    scope: CaptureScope = "windowFrame",
+  ): Promise<ReviewArtifacts> {
+    const { snapshot } = await this.preview(scope);
     const imageDataURL = snapshot.imageDataURL;
     const match = /^data:image\/(png|svg\+xml);base64,([A-Za-z0-9+/=]+)$/.exec(imageDataURL);
     if (!match?.[1] || !match[2]) throw new Error("Unsupported review image data URL");
@@ -182,7 +199,7 @@ export class InspectorSession {
     await writeFile(imagePath, Buffer.from(match[2], "base64"), { mode: 0o600 });
     await writeFile(
       contextPath,
-      JSON.stringify({ selectedViewID, note, createdAt: new Date().toISOString() }, null, 2),
+      JSON.stringify({ selectedViewID, note, scope, createdAt: new Date().toISOString() }, null, 2),
       { mode: 0o600 },
     );
     return { imagePath, contextPath };
@@ -380,13 +397,13 @@ export function createServer(
     "appkit_snapshot",
     {
       title: "Refresh AppKit snapshot",
-      description: "Refresh the current screenshot and native view hierarchy.",
-      inputSchema: {},
+      description: "Refresh the current window-frame or content screenshot and native view hierarchy.",
+      inputSchema: { scope: captureScopeSchema.optional() },
       annotations: { readOnlyHint: true },
       _meta: outputMetadata("app", true),
     },
-    async () => {
-      const state = await session.preview();
+    async ({ scope }) => {
+      const state = await session.preview(scope);
       return toolResult("Refreshed AppKit snapshot.", state);
     },
   );
@@ -399,12 +416,13 @@ export function createServer(
       inputSchema: {
         x: z.number().min(0).max(1),
         y: z.number().min(0).max(1),
+        scope: captureScopeSchema.optional(),
       },
       annotations: { readOnlyHint: true },
       _meta: outputMetadata("app", true),
     },
-    async ({ x, y }) => {
-      const state = await session.inspect(x, y);
+    async ({ x, y, scope }) => {
+      const state = await session.inspect(x, y, scope);
       const node = state.selected?.node;
       return toolResult(
         node ? `Selected ${node.className}${node.label ? ` (${node.label})` : ""}.` : "No view selected.",
@@ -421,11 +439,12 @@ export function createServer(
       inputSchema: {
         selectedViewID: z.string().optional(),
         note: z.string().max(8_000),
+        scope: captureScopeSchema.optional(),
       },
       _meta: outputMetadata("app"),
     },
-    async ({ selectedViewID, note }) => {
-      const { imagePath, contextPath } = await session.saveReview(selectedViewID, note);
+    async ({ selectedViewID, note, scope }) => {
+      const { imagePath, contextPath } = await session.saveReview(selectedViewID, note, scope);
       return toolResult("Saved local AppKit review artifacts.", { imagePath, contextPath });
     },
   );

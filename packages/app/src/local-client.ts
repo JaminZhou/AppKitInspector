@@ -4,6 +4,8 @@ export type StandaloneConnection = {
   cleanURL: string;
 };
 
+export type CaptureScope = "content" | "windowFrame";
+
 type LocationLike = {
   protocol: string;
   hostname: string;
@@ -30,21 +32,21 @@ export class LocalInspectorClient {
     private readonly request: typeof fetch = globalThis.fetch.bind(globalThis),
   ) {}
 
-  snapshot<T>(): Promise<T> {
-    return this.call<T>("/api/snapshot");
+  snapshot<T>(scope: CaptureScope): Promise<T> {
+    return this.call<T>(`/api/snapshot?scope=${encodeURIComponent(scope)}`);
   }
 
-  inspect<T>(x: number, y: number): Promise<T> {
+  inspect<T>(x: number, y: number, scope: CaptureScope): Promise<T> {
     return this.call<T>("/api/inspect", {
       method: "POST",
-      body: JSON.stringify({ x, y }),
+      body: JSON.stringify({ x, y, scope }),
     });
   }
 
-  saveReview<T>(selectedViewID: string, note: string): Promise<T> {
+  saveReview<T>(selectedViewID: string, note: string, scope: CaptureScope): Promise<T> {
     return this.call<T>("/api/review", {
       method: "POST",
-      body: JSON.stringify({ selectedViewID, note }),
+      body: JSON.stringify({ selectedViewID, note, scope }),
     });
   }
 

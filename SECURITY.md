@@ -1,8 +1,8 @@
 # Security Policy
 
-AppKit Inspector is a development-only bridge that can capture the visible content and native view
-hierarchy of a running AppKit application. Treat every captured snapshot and review artifact as
-private application data.
+AppKit Inspector is a development-only bridge that can capture the visible window frame or content
+and native view hierarchy of a running AppKit application. Treat every captured snapshot and review
+artifact as private application data.
 
 ## Supported versions
 

@@ -29190,6 +29190,7 @@ var viewNodeSchema = external_exports.lazy(
     subviews: external_exports.array(viewNodeSchema)
   })
 );
+var captureScopeSchema = external_exports.enum(["content", "windowFrame"]);
 var targetSchema = external_exports.object({
   pid: external_exports.number().int().positive(),
   name: external_exports.string().min(1),
@@ -29200,12 +29201,14 @@ var targetSchema = external_exports.object({
 });
 var publicTargetSchema = targetSchema.omit({ token: true });
 var snapshotSchema = external_exports.object({
-  schemaVersion: external_exports.literal(1),
+  schemaVersion: external_exports.union([external_exports.literal(1), external_exports.literal(2)]),
   target: publicTargetSchema,
   window: external_exports.object({
     id: external_exports.string(),
     title: external_exports.string(),
-    frame: rectSchema
+    frame: rectSchema,
+    contentFrame: rectSchema.optional(),
+    captureScope: captureScopeSchema.optional()
   }),
   imageDataURL: external_exports.string().min(1),
   root: viewNodeSchema
@@ -29230,22 +29233,27 @@ var view = (id, className, x, y, width, height, label, subviews = []) => ({
   ...label ? { label } : {},
   subviews
 });
-var root = view("root", "NSThemeFrame", 0, 0, 960, 600, "Demo window", [
-  view("split", "NSSplitView", 0, 0, 960, 552, void 0, [
-    view("sidebar", "NSVisualEffectView", 0, 0, 224, 552, "Sidebar", [
-      view("sessions", "NSOutlineView", 12, 54, 200, 450, "Sessions"),
-      view("add", "NSButton", 12, 14, 28, 28, "Add Folder")
-    ]),
-    view("content", "NSView", 224, 0, 736, 552, "Session detail", [
-      view("title", "NSTextField", 260, 486, 310, 28, "Agent Session"),
-      view("search", "NSSearchField", 260, 438, 320, 30, "Search events"),
-      view("timeline", "NSCollectionView", 260, 24, 660, 390, "Timeline")
-    ])
+var contentRoot = view("split", "NSSplitView", 0, 0, 960, 552, void 0, [
+  view("sidebar", "NSVisualEffectView", 0, 0, 224, 552, "Sidebar", [
+    view("sessions", "NSOutlineView", 12, 54, 200, 450, "Sessions"),
+    view("add", "NSButton", 12, 14, 28, 28, "Add Folder")
   ]),
-  view("toolbar", "NSToolbarView", 0, 552, 960, 48, "Toolbar")
+  view("content", "NSView", 224, 0, 736, 552, "Session detail", [
+    view("title", "NSTextField", 260, 486, 310, 28, "Agent Session"),
+    view("search", "NSSearchField", 260, 438, 320, 30, "Search events"),
+    view("timeline", "NSCollectionView", 260, 24, 660, 390, "Timeline")
+  ])
 ]);
-function mockImageDataURL() {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600">
+var root = view("root", "NSThemeFrame", 0, 0, 960, 600, "Demo window", [
+  contentRoot,
+  view("toolbar", "NSToolbarView", 0, 552, 960, 48, "Toolbar"),
+  view("close", "NSButton", 16, 570, 12, 12, "Close Window"),
+  view("minimize", "NSButton", 36, 570, 12, 12, "Minimize Window"),
+  view("zoom", "NSButton", 56, 570, 12, 12, "Zoom Window")
+]);
+function mockImageDataURL(scope) {
+  const contentOnly = scope === "content";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="${contentOnly ? 552 : 600}" viewBox="0 ${contentOnly ? 48 : 0} 960 ${contentOnly ? 552 : 600}">
   <defs><linearGradient id="bg" x2="0" y2="1"><stop stop-color="#f6f6f8"/><stop offset="1" stop-color="#ececf0"/></linearGradient></defs>
   <rect width="960" height="600" rx="12" fill="url(#bg)"/>
   <rect width="960" height="48" fill="#fafafbcc"/><path d="M0 48h960" stroke="#d5d5da"/>
@@ -29262,9 +29270,10 @@ function mockImageDataURL() {
   </svg>`;
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
-function mockSnapshot() {
+function mockSnapshot(scope = "windowFrame") {
+  const contentOnly = scope === "content";
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     target: {
       pid: 1,
       name: "AppKit Inspector Demo",
@@ -29275,14 +29284,16 @@ function mockSnapshot() {
     window: {
       id: "window-main",
       title: "AppKit Inspector Demo",
-      frame: { x: 0, y: 0, width: 960, height: 600 }
+      frame: { x: 0, y: 0, width: 960, height: contentOnly ? 552 : 600 },
+      contentFrame: { x: 0, y: 0, width: 960, height: 552 },
+      captureScope: scope
     },
-    imageDataURL: mockImageDataURL(),
-    root
+    imageDataURL: mockImageDataURL(scope),
+    root: contentOnly ? contentRoot : root
   };
 }
-function inspectMockPoint(x, y) {
-  const snapshot = mockSnapshot();
+function inspectMockPoint(x, y, scope = "windowFrame") {
+  const snapshot = mockSnapshot(scope);
   const pointX = x * snapshot.window.frame.width;
   const pointY = (1 - y) * snapshot.window.frame.height;
   const visit = (node, path) => {
@@ -29336,11 +29347,11 @@ async function discoverTargets() {
 function publicTarget(target) {
   return publicTargetSchema.parse(target);
 }
-async function requestSnapshot(target) {
-  return snapshotSchema.parse(await request(target, { method: "snapshot" }));
+async function requestSnapshot(target, scope = "windowFrame") {
+  return snapshotSchema.parse(await request(target, { method: "snapshot", scope }));
 }
-async function requestInspectPoint(target, x, y) {
-  return inspectResultSchema.parse(await request(target, { method: "inspectPoint", x, y }));
+async function requestInspectPoint(target, x, y, scope = "windowFrame") {
+  return inspectResultSchema.parse(await request(target, { method: "inspectPoint", x, y, scope }));
 }
 async function request(target, payload) {
   return await new Promise((resolve, reject) => {
@@ -29428,6 +29439,9 @@ function send(response, status, body, contentType, headers = {}) {
 }
 function sendJSON(response, status, value) {
   send(response, status, JSON.stringify(value), "application/json");
+}
+function captureScope(value) {
+  return captureScopeSchema.catch("windowFrame").parse(value);
 }
 async function readJSON(request2) {
   const chunks = [];
@@ -29576,7 +29590,7 @@ var InspectorWindowServer = class {
       return;
     }
     if (request2.method === "GET" && url2.pathname === "/api/snapshot") {
-      sendJSON(response, 200, await this.backend.preview());
+      sendJSON(response, 200, await this.backend.preview(captureScope(url2.searchParams.get("scope"))));
       return;
     }
     if (request2.method === "POST" && url2.pathname === "/api/inspect") {
@@ -29587,7 +29601,7 @@ var InspectorWindowServer = class {
         sendJSON(response, 400, { error: "Inspect coordinates must be between 0 and 1" });
         return;
       }
-      sendJSON(response, 200, await this.backend.inspect(x, y));
+      sendJSON(response, 200, await this.backend.inspect(x, y, captureScope(body.scope)));
       return;
     }
     if (request2.method === "POST" && url2.pathname === "/api/review") {
@@ -29598,7 +29612,11 @@ var InspectorWindowServer = class {
         sendJSON(response, 400, { error: "Review requires a view id and note up to 8,000 characters" });
         return;
       }
-      sendJSON(response, 200, await this.backend.saveReview(selectedViewID, note));
+      sendJSON(
+        response,
+        200,
+        await this.backend.saveReview(selectedViewID, note, captureScope(body.scope))
+      );
       return;
     }
     sendJSON(response, 404, { error: "Not found" });
@@ -29630,7 +29648,7 @@ var InspectorWindowServer = class {
 
 // packages/mcp/src/server.ts
 var VERSION = "0.1.1";
-var RESOURCE_REVISION = true ? "1487534b53f71d99" : "development";
+var RESOURCE_REVISION = true ? "2697b534573c387f" : "development";
 function installedPluginVersion() {
   try {
     const manifest = JSON.parse(
@@ -29679,12 +29697,12 @@ var InspectorSession = class {
     this.selectedTarget = selected;
     return { connected: true, target: publicTarget(selected) };
   }
-  async liveSnapshot() {
+  async liveSnapshot(scope = "windowFrame") {
     if (this.selectedTarget) {
       try {
         return {
           target: this.selectedTarget,
-          snapshot: await requestSnapshot(this.selectedTarget)
+          snapshot: await requestSnapshot(this.selectedTarget, scope)
         };
       } catch {
         delete this.selectedTarget;
@@ -29694,7 +29712,7 @@ var InspectorSession = class {
     if (targets.length !== 1 || !targets[0]) return void 0;
     try {
       const target = targets[0];
-      const snapshot = await requestSnapshot(target);
+      const snapshot = await requestSnapshot(target, scope);
       this.selectedTarget = target;
       return { target, snapshot };
     } catch {
@@ -29716,18 +29734,18 @@ var InspectorSession = class {
     this.selectedTarget = target;
     return target;
   }
-  async preview() {
-    const live = await this.liveSnapshot();
-    if (!live) return { connected: false, isMock: true, snapshot: mockSnapshot() };
+  async preview(scope = "windowFrame") {
+    const live = await this.liveSnapshot(scope);
+    if (!live) return { connected: false, isMock: true, snapshot: mockSnapshot(scope) };
     return {
       connected: true,
       isMock: false,
       snapshot: live.snapshot
     };
   }
-  async inspect(x, y) {
-    if (!this.selectedTarget) await this.liveSnapshot();
-    const selected = this.selectedTarget ? await requestInspectPoint(this.selectedTarget, x, y) : inspectMockPoint(x, y);
+  async inspect(x, y, scope = "windowFrame") {
+    if (!this.selectedTarget) await this.liveSnapshot(scope);
+    const selected = this.selectedTarget ? await requestInspectPoint(this.selectedTarget, x, y, scope) : inspectMockPoint(x, y, scope);
     return {
       connected: Boolean(this.selectedTarget),
       isMock: !this.selectedTarget,
@@ -29735,8 +29753,8 @@ var InspectorSession = class {
       selected
     };
   }
-  async saveReview(selectedViewID, note) {
-    const { snapshot } = await this.preview();
+  async saveReview(selectedViewID, note, scope = "windowFrame") {
+    const { snapshot } = await this.preview(scope);
     const imageDataURL = snapshot.imageDataURL;
     const match = /^data:image\/(png|svg\+xml);base64,([A-Za-z0-9+/=]+)$/.exec(imageDataURL);
     if (!match?.[1] || !match[2]) throw new Error("Unsupported review image data URL");
@@ -29748,7 +29766,7 @@ var InspectorSession = class {
     await writeFile(imagePath, Buffer.from(match[2], "base64"), { mode: 384 });
     await writeFile(
       contextPath,
-      JSON.stringify({ selectedViewID, note, createdAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
+      JSON.stringify({ selectedViewID, note, scope, createdAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
       { mode: 384 }
     );
     return { imagePath, contextPath };
@@ -29908,13 +29926,13 @@ function createServer2(session = new InspectorSession(), inspectorWindow = new I
     "appkit_snapshot",
     {
       title: "Refresh AppKit snapshot",
-      description: "Refresh the current screenshot and native view hierarchy.",
-      inputSchema: {},
+      description: "Refresh the current window-frame or content screenshot and native view hierarchy.",
+      inputSchema: { scope: captureScopeSchema.optional() },
       annotations: { readOnlyHint: true },
       _meta: outputMetadata("app", true)
     },
-    async () => {
-      const state = await session.preview();
+    async ({ scope }) => {
+      const state = await session.preview(scope);
       return toolResult("Refreshed AppKit snapshot.", state);
     }
   );
@@ -29925,13 +29943,14 @@ function createServer2(session = new InspectorSession(), inspectorWindow = new I
       description: "Return the deepest native NSView at a normalized top-left image coordinate.",
       inputSchema: {
         x: external_exports.number().min(0).max(1),
-        y: external_exports.number().min(0).max(1)
+        y: external_exports.number().min(0).max(1),
+        scope: captureScopeSchema.optional()
       },
       annotations: { readOnlyHint: true },
       _meta: outputMetadata("app", true)
     },
-    async ({ x, y }) => {
-      const state = await session.inspect(x, y);
+    async ({ x, y, scope }) => {
+      const state = await session.inspect(x, y, scope);
       const node = state.selected?.node;
       return toolResult(
         node ? `Selected ${node.className}${node.label ? ` (${node.label})` : ""}.` : "No view selected.",
@@ -29946,12 +29965,13 @@ function createServer2(session = new InspectorSession(), inspectorWindow = new I
       description: "Save the current local preview image for a message sent from the embedded app.",
       inputSchema: {
         selectedViewID: external_exports.string().optional(),
-        note: external_exports.string().max(8e3)
+        note: external_exports.string().max(8e3),
+        scope: captureScopeSchema.optional()
       },
       _meta: outputMetadata("app")
     },
-    async ({ selectedViewID, note }) => {
-      const { imagePath, contextPath } = await session.saveReview(selectedViewID, note);
+    async ({ selectedViewID, note, scope }) => {
+      const { imagePath, contextPath } = await session.saveReview(selectedViewID, note, scope);
       return toolResult("Saved local AppKit review artifacts.", { imagePath, contextPath });
     }
   );

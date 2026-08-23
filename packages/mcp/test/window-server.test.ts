@@ -1,21 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectMockPoint, mockSnapshot } from "../src/mock.js";
+import type { CaptureScope } from "../src/contracts.js";
 import { InspectorWindowServer } from "../src/window-server.js";
 
 test("standalone inspector supports fragment Bearer and single-use Browser sessions", async () => {
   const opened: string[] = [];
   const reviews: Array<{ selectedViewID: string | undefined; note: string }> = [];
+  const scopes: CaptureScope[] = [];
   const server = new InspectorWindowServer(
     {
-      async preview() {
-        return { connected: false, isMock: true, snapshot: mockSnapshot() };
+      async preview(scope = "windowFrame") {
+        scopes.push(scope);
+        return { connected: false, isMock: true, snapshot: mockSnapshot(scope) };
       },
-      async inspect(x, y) {
-        const selected = inspectMockPoint(x, y);
+      async inspect(x, y, scope = "windowFrame") {
+        scopes.push(scope);
+        const selected = inspectMockPoint(x, y, scope);
         return { connected: false, isMock: true, snapshot: selected.snapshot, selected };
       },
-      async saveReview(selectedViewID, note) {
+      async saveReview(selectedViewID, note, scope = "windowFrame") {
+        scopes.push(scope);
         reviews.push({ selectedViewID, note });
         return { imagePath: "/private/review.png", contextPath: "/private/context.json" };
       },
@@ -62,11 +67,13 @@ test("standalone inspector supports fragment Bearer and single-use Browser sessi
     assert.match(cookie, /SameSite=Strict/);
     const reused = await fetch(browserLaunch, { redirect: "manual" });
     assert.equal(reused.status, 401);
-    const browserSnapshot = await fetch(`${windowURL.origin}/api/snapshot`, {
+    const browserSnapshot = await fetch(`${windowURL.origin}/api/snapshot?scope=content`, {
       headers: { Cookie: cookie.split(";", 1)[0] ?? "" },
     });
     assert.equal(browserSnapshot.status, 200);
-    assert.equal((await browserSnapshot.json()).isMock, true);
+    const browserState = await browserSnapshot.json();
+    assert.equal(browserState.isMock, true);
+    assert.equal(browserState.snapshot.window.captureScope, "content");
 
     const authorization = { Authorization: `Bearer ${token}` };
     const snapshot = await fetch(`${windowURL.origin}/api/snapshot`, { headers: authorization });
@@ -76,7 +83,7 @@ test("standalone inspector supports fragment Bearer and single-use Browser sessi
     const wrongOrigin = await fetch(`${windowURL.origin}/api/inspect`, {
       method: "POST",
       headers: { ...authorization, "Content-Type": "application/json", Origin: "http://example.com" },
-      body: JSON.stringify({ x: 0.5, y: 0.5 }),
+      body: JSON.stringify({ x: 0.5, y: 0.5, scope: "windowFrame" }),
     });
     assert.equal(wrongOrigin.status, 403);
 
@@ -91,10 +98,12 @@ test("standalone inspector supports fragment Bearer and single-use Browser sessi
     const review = await fetch(`${windowURL.origin}/api/review`, {
       method: "POST",
       headers: { ...authorization, "Content-Type": "application/json", Origin: windowURL.origin },
-      body: JSON.stringify({ selectedViewID: "view-1", note: "Tighten spacing" }),
+      body: JSON.stringify({ selectedViewID: "view-1", note: "Tighten spacing", scope: "content" }),
     });
     assert.equal(review.status, 200);
     assert.deepEqual(reviews, [{ selectedViewID: "view-1", note: "Tighten spacing" }]);
+    assert.ok(scopes.includes("windowFrame"));
+    assert.ok(scopes.includes("content"));
 
     await server.open();
     assert.equal(opened.length, 1);

@@ -4,7 +4,12 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
-import type { InspectResult, Snapshot } from "./contracts.js";
+import {
+  captureScopeSchema,
+  type CaptureScope,
+  type InspectResult,
+  type Snapshot,
+} from "./contracts.js";
 
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
@@ -30,9 +35,13 @@ export type BrowserLaunch = {
 };
 
 export type InspectorWindowBackend = {
-  preview(): Promise<InspectorWindowState>;
-  inspect(x: number, y: number): Promise<InspectorWindowState>;
-  saveReview(selectedViewID: string | undefined, note: string): Promise<ReviewArtifacts>;
+  preview(scope?: CaptureScope): Promise<InspectorWindowState>;
+  inspect(x: number, y: number, scope?: CaptureScope): Promise<InspectorWindowState>;
+  saveReview(
+    selectedViewID: string | undefined,
+    note: string,
+    scope?: CaptureScope,
+  ): Promise<ReviewArtifacts>;
 };
 
 type Assets = { template: string; script: string };
@@ -85,6 +94,10 @@ function send(
 
 function sendJSON(response: ServerResponse, status: number, value: unknown): void {
   send(response, status, JSON.stringify(value), "application/json");
+}
+
+function captureScope(value: unknown): CaptureScope {
+  return captureScopeSchema.catch("windowFrame").parse(value);
 }
 
 async function readJSON(request: IncomingMessage): Promise<Record<string, unknown>> {
@@ -243,7 +256,7 @@ export class InspectorWindowServer {
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/snapshot") {
-      sendJSON(response, 200, await this.backend.preview());
+      sendJSON(response, 200, await this.backend.preview(captureScope(url.searchParams.get("scope"))));
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/inspect") {
@@ -254,7 +267,7 @@ export class InspectorWindowServer {
         sendJSON(response, 400, { error: "Inspect coordinates must be between 0 and 1" });
         return;
       }
-      sendJSON(response, 200, await this.backend.inspect(x, y));
+      sendJSON(response, 200, await this.backend.inspect(x, y, captureScope(body.scope)));
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/review") {
@@ -265,7 +278,11 @@ export class InspectorWindowServer {
         sendJSON(response, 400, { error: "Review requires a view id and note up to 8,000 characters" });
         return;
       }
-      sendJSON(response, 200, await this.backend.saveReview(selectedViewID, note));
+      sendJSON(
+        response,
+        200,
+        await this.backend.saveReview(selectedViewID, note, captureScope(body.scope)),
+      );
       return;
     }
     sendJSON(response, 404, { error: "Not found" });

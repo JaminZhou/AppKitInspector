@@ -5,13 +5,37 @@ import { inspectMockPoint, mockSnapshot } from "../src/mock.js";
 
 test("mock snapshot satisfies the transport contract", () => {
   const snapshot = snapshotSchema.parse(mockSnapshot());
-  assert.equal(snapshot.schemaVersion, 1);
-  assert.ok(flattenViews(snapshot.root).length >= 8);
+  assert.equal(snapshot.schemaVersion, 2);
+  assert.equal(snapshot.window.captureScope, "windowFrame");
+  assert.ok(flattenViews(snapshot.root).some((view) => view.label === "Close Window"));
   assert.match(snapshot.imageDataURL, /^data:image\/svg\+xml;base64,/);
+
+  const content = snapshotSchema.parse(mockSnapshot("content"));
+  assert.equal(content.window.captureScope, "content");
+  assert.equal(flattenViews(content.root).some((view) => view.label === "Close Window"), false);
 });
 
 test("mock point inspection returns a concrete view and ancestor path", () => {
   const result = inspectResultSchema.parse(inspectMockPoint(0.4, 0.25));
   assert.ok(result.node.className.length > 0);
   assert.equal(result.ancestorPath.at(-1), result.node.className);
+});
+
+test("window-frame point inspection can select a traffic-light control", () => {
+  const result = inspectResultSchema.parse(inspectMockPoint(0.023, 0.04, "windowFrame"));
+  assert.equal(result.node.label, "Close Window");
+});
+
+test("schema one content snapshots remain compatible", () => {
+  const current = mockSnapshot("content");
+  const legacy = {
+    ...current,
+    schemaVersion: 1,
+    window: {
+      id: current.window.id,
+      title: current.window.title,
+      frame: current.window.frame,
+    },
+  };
+  assert.equal(snapshotSchema.parse(legacy).window.captureScope, undefined);
 });
