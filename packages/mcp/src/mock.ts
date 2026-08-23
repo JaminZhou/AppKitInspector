@@ -63,7 +63,7 @@ function mockImageDataURL(scope: CaptureScope): string {
 export function mockSnapshot(scope: CaptureScope = "windowFrame"): Snapshot {
   const contentOnly = scope === "content";
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     target: {
       pid: 1,
       name: "AppKit Inspector Demo",
@@ -77,6 +77,7 @@ export function mockSnapshot(scope: CaptureScope = "windowFrame"): Snapshot {
       frame: { x: 0, y: 0, width: 960, height: contentOnly ? 552 : 600 },
       contentFrame: { x: 0, y: 0, width: 960, height: 552 },
       captureScope: scope,
+      captureRendering: contentOnly ? "viewCache" : "windowFrameHybrid",
     },
     imageDataURL: mockImageDataURL(scope),
     root: contentOnly ? contentRoot : root,

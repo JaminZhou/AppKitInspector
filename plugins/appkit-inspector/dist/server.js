@@ -29191,6 +29191,7 @@ var viewNodeSchema = external_exports.lazy(
   })
 );
 var captureScopeSchema = external_exports.enum(["content", "windowFrame"]);
+var captureRenderingSchema = external_exports.enum(["viewCache", "windowFrameHybrid"]);
 var targetSchema = external_exports.object({
   pid: external_exports.number().int().positive(),
   name: external_exports.string().min(1),
@@ -29201,14 +29202,15 @@ var targetSchema = external_exports.object({
 });
 var publicTargetSchema = targetSchema.omit({ token: true });
 var snapshotSchema = external_exports.object({
-  schemaVersion: external_exports.union([external_exports.literal(1), external_exports.literal(2)]),
+  schemaVersion: external_exports.union([external_exports.literal(1), external_exports.literal(2), external_exports.literal(3)]),
   target: publicTargetSchema,
   window: external_exports.object({
     id: external_exports.string(),
     title: external_exports.string(),
     frame: rectSchema,
     contentFrame: rectSchema.optional(),
-    captureScope: captureScopeSchema.optional()
+    captureScope: captureScopeSchema.optional(),
+    captureRendering: captureRenderingSchema.optional()
   }),
   imageDataURL: external_exports.string().min(1),
   root: viewNodeSchema
@@ -29273,7 +29275,7 @@ function mockImageDataURL(scope) {
 function mockSnapshot(scope = "windowFrame") {
   const contentOnly = scope === "content";
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     target: {
       pid: 1,
       name: "AppKit Inspector Demo",
@@ -29286,7 +29288,8 @@ function mockSnapshot(scope = "windowFrame") {
       title: "AppKit Inspector Demo",
       frame: { x: 0, y: 0, width: 960, height: contentOnly ? 552 : 600 },
       contentFrame: { x: 0, y: 0, width: 960, height: 552 },
-      captureScope: scope
+      captureScope: scope,
+      captureRendering: contentOnly ? "viewCache" : "windowFrameHybrid"
     },
     imageDataURL: mockImageDataURL(scope),
     root: contentOnly ? contentRoot : root
@@ -29648,7 +29651,7 @@ var InspectorWindowServer = class {
 
 // packages/mcp/src/server.ts
 var VERSION = "0.1.1";
-var RESOURCE_REVISION = true ? "2697b534573c387f" : "development";
+var RESOURCE_REVISION = true ? "c61fc9c71e449d0b" : "development";
 function installedPluginVersion() {
   try {
     const manifest = JSON.parse(

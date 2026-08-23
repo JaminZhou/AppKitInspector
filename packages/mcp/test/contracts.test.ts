@@ -5,13 +5,15 @@ import { inspectMockPoint, mockSnapshot } from "../src/mock.js";
 
 test("mock snapshot satisfies the transport contract", () => {
   const snapshot = snapshotSchema.parse(mockSnapshot());
-  assert.equal(snapshot.schemaVersion, 2);
+  assert.equal(snapshot.schemaVersion, 3);
   assert.equal(snapshot.window.captureScope, "windowFrame");
+  assert.equal(snapshot.window.captureRendering, "windowFrameHybrid");
   assert.ok(flattenViews(snapshot.root).some((view) => view.label === "Close Window"));
   assert.match(snapshot.imageDataURL, /^data:image\/svg\+xml;base64,/);
 
   const content = snapshotSchema.parse(mockSnapshot("content"));
   assert.equal(content.window.captureScope, "content");
+  assert.equal(content.window.captureRendering, "viewCache");
   assert.equal(flattenViews(content.root).some((view) => view.label === "Close Window"), false);
 });
 
@@ -38,4 +40,11 @@ test("schema one content snapshots remain compatible", () => {
     },
   };
   assert.equal(snapshotSchema.parse(legacy).window.captureScope, undefined);
+});
+
+test("schema two window snapshots remain compatible without rendering metadata", () => {
+  const current = mockSnapshot();
+  const { captureRendering: _captureRendering, ...window } = current.window;
+  const legacy = { ...current, schemaVersion: 2, window };
+  assert.equal(snapshotSchema.parse(legacy).window.captureRendering, undefined);
 });

@@ -21,21 +21,22 @@ enum ViewSnapshotter {
             throw ProbeError.captureFailed
         }
         rootView.cacheDisplay(in: rootView.bounds, to: bitmap)
-        guard let png = bitmap.representation(using: .png, properties: [:]) else {
+        guard let capture = capturePNG(context: context, bitmap: bitmap) else {
             throw ProbeError.captureFailed
         }
 
         return ProbeSnapshot(
-            schemaVersion: 2,
+            schemaVersion: 3,
             target: target,
             window: ProbeWindow(
                 id: objectID(context.window),
                 title: context.window.title,
                 frame: ProbeRect(rootView.bounds),
-                contentFrame: ProbeRect(context.contentView.convert(context.contentView.bounds, to: rootView)),
-                captureScope: context.scope
+                contentFrame: ProbeRect(contentLayoutFrame(context: context)),
+                captureScope: context.scope,
+                captureRendering: capture.rendering
             ),
-            imageDataURL: "data:image/png;base64,\(png.base64EncodedString())",
+            imageDataURL: "data:image/png;base64,\(capture.png.base64EncodedString())",
             root: viewNode(rootView, relativeTo: rootView, window: context.window)
         )
     }
@@ -104,6 +105,139 @@ enum ViewSnapshotter {
             rootView: rootView,
             scope: actualScope
         )
+    }
+
+    private static func contentLayoutFrame(context: CaptureContext) -> NSRect {
+        guard context.scope == .windowFrame else { return context.contentView.bounds }
+        return context.rootView.convert(context.window.contentLayoutRect, from: nil)
+    }
+
+    private static func capturePNG(
+        context: CaptureContext,
+        bitmap: NSBitmapImageRep
+    ) -> (png: Data, rendering: ProbeCaptureRendering)? {
+        if context.scope == .windowFrame,
+           let png = hybridWindowFramePNG(context: context, cachedBitmap: bitmap) {
+            return (png, .windowFrameHybrid)
+        }
+        guard let png = bitmap.representation(using: .png, properties: [:]) else { return nil }
+        return (png, .viewCache)
+    }
+
+    private static func hybridWindowFramePNG(
+        context: CaptureContext,
+        cachedBitmap: NSBitmapImageRep
+    ) -> Data? {
+        let rootView = context.rootView
+        let bounds = rootView.bounds
+        let contentLayoutFrame = contentLayoutFrame(context: context)
+        let frameArea = NSRect(
+            x: bounds.minX,
+            y: max(bounds.minY, contentLayoutFrame.maxY),
+            width: bounds.width,
+            height: max(0, bounds.maxY - contentLayoutFrame.maxY)
+        )
+        guard frameArea.height > 0,
+              let pdfImage = NSImage(data: context.window.dataWithPDF(inside: bounds))
+        else {
+            return nil
+        }
+
+        let cachedImage = NSImage(size: bounds.size)
+        cachedImage.addRepresentation(cachedBitmap)
+        let output = NSImage(size: bounds.size)
+        output.lockFocus()
+        cachedImage.draw(in: bounds)
+        pdfImage.draw(in: frameArea, from: frameArea, operation: .copy, fraction: 1)
+        restoreToolbarControlContent(
+            window: context.window,
+            rootView: rootView,
+            frameArea: frameArea
+        )
+        restoreStandardWindowButtons(
+            window: context.window,
+            rootView: rootView,
+            cachedImage: cachedImage
+        )
+        output.unlockFocus()
+
+        guard let tiff = output.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff)
+        else {
+            return nil
+        }
+        return bitmap.representation(using: .png, properties: [:])
+    }
+
+    private static func restoreToolbarControlContent(
+        window: NSWindow,
+        rootView: NSView,
+        frameArea: NSRect
+    ) {
+        let standardButtons = Set(
+            [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton, .toolbarButton]
+                .compactMap { window.standardWindowButton($0).map(ObjectIdentifier.init) }
+        )
+        for view in descendants(of: rootView) {
+            guard let button = view as? NSButton,
+                  !standardButtons.contains(ObjectIdentifier(button)),
+                  !button.isHidden,
+                  button.alphaValue > 0,
+                  !hasSearchFieldAncestor(button),
+                  let image = button.image
+            else {
+                continue
+            }
+            let frame = button.convert(button.bounds, to: rootView)
+            guard frame.intersects(frameArea) else { continue }
+            let side = min(18, max(8, min(frame.width, frame.height) - 8))
+            let imageFrame = NSRect(
+                x: frame.midX - side / 2,
+                y: frame.midY - side / 2,
+                width: side,
+                height: side
+            )
+            let renderedImage = image.isTemplate
+                ? image.withSymbolConfiguration(.init(hierarchicalColor: .labelColor)) ?? image
+                : image
+            renderedImage.draw(
+                in: imageFrame,
+                from: .zero,
+                operation: .sourceOver,
+                fraction: button.alphaValue,
+                respectFlipped: false,
+                hints: [.interpolation: NSImageInterpolation.high]
+            )
+        }
+    }
+
+    private static func descendants(of view: NSView) -> [NSView] {
+        view.subviews + view.subviews.flatMap(descendants)
+    }
+
+    private static func hasSearchFieldAncestor(_ view: NSView) -> Bool {
+        var cursor = view.superview
+        while let ancestor = cursor {
+            if ancestor is NSSearchField { return true }
+            cursor = ancestor.superview
+        }
+        return false
+    }
+
+    private static func restoreStandardWindowButtons(
+        window: NSWindow,
+        rootView: NSView,
+        cachedImage: NSImage
+    ) {
+        let buttonTypes: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        for buttonType in buttonTypes {
+            guard let button = window.standardWindowButton(buttonType), !button.isHidden else { continue }
+            let frame = button.convert(button.bounds, to: rootView)
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(ovalIn: frame).addClip()
+            cachedImage.draw(in: frame, from: frame, operation: .copy, fraction: 1)
+            NSGraphicsContext.restoreGraphicsState()
+        }
     }
 
     private static func semanticLabel(for view: NSView, window: NSWindow) -> String? {

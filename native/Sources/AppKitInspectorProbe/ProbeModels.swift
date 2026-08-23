@@ -59,12 +59,18 @@ public enum ProbeCaptureScope: String, Codable, Equatable, Sendable {
     case windowFrame
 }
 
+public enum ProbeCaptureRendering: String, Codable, Equatable, Sendable {
+    case viewCache
+    case windowFrameHybrid
+}
+
 public struct ProbeWindow: Codable, Equatable, Sendable {
     public let id: String
     public let title: String
     public let frame: ProbeRect
     public let contentFrame: ProbeRect
     public let captureScope: ProbeCaptureScope
+    public let captureRendering: ProbeCaptureRendering
 }
 
 public struct ProbeSnapshot: Codable, Equatable, Sendable {

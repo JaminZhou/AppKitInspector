@@ -47,8 +47,11 @@ try {
   if (state.snapshot?.window?.captureScope !== "windowFrame") {
     throw new Error("Live target did not return the Window Frame capture scope");
   }
-  if (state.snapshot?.schemaVersion !== 2) {
+  if (state.snapshot?.schemaVersion !== 3) {
     throw new Error("Live target did not return the Window Frame schema version");
+  }
+  if (state.snapshot?.window?.captureRendering !== "windowFrameHybrid") {
+    throw new Error("Live target did not return the hybrid AppKit Window Frame rendering");
   }
   const views = [];
   const collect = (node) => {
@@ -77,6 +80,9 @@ try {
   });
   if (content.structuredContent?.snapshot?.window?.captureScope !== "content") {
     throw new Error("Live target did not switch to the Content capture scope");
+  }
+  if (content.structuredContent?.snapshot?.window?.captureRendering !== "viewCache") {
+    throw new Error("Content capture did not use the AppKit view cache");
   }
   process.stdout.write(
     `Connected to ${target.name} (${target.pid}); selected Close Window and verified Content mode.\n`,

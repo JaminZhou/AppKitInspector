@@ -16,6 +16,9 @@ for a coding task.
 
 - Inspect a real AppKit window frame, title bar, traffic-light controls, toolbar, and content without
   Accessibility or Screen Recording permission.
+- Keep modern toolbar controls readable with a public-AppKit hybrid capture: the content stays on
+  the live view cache, while the frame region uses AppKit PDF drawing and restores the real standard
+  window buttons from the cache.
 - Click the captured interface and identify the deepest native `NSView`.
 - Review class names, frames, accessibility metadata, and ancestor paths.
 - Copy a feedback package containing the selected view, geometry, note, and private local artifacts.
@@ -60,6 +63,8 @@ Use AppKit Inspector to connect to the running demo and open it in Codex Browser
 explicitly presents the right Browser panel after navigation. In the Inspector, use **Fit**, **−**,
 and **+** to resize the snapshot; trackpad pinch and Command-modified scrolling also zoom.
 Use **Window** for title-bar and frame annotations or **Content** for a focused content-only view.
+Window mode labels its hybrid preview because compositor-only glass and blur are approximated; use
+Content mode when pixel fidelity inside the content view matters most.
 ```
 
 The default `open_appkit_inspector` tool creates a 60-second, single-use loopback URL for the

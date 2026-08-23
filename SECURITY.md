@@ -34,6 +34,8 @@ Ordinary layout problems and unsupported AppKit controls can use public issues.
   session cookie.
 - The project does not use injection, private frameworks, Accessibility automation, or Screen
   Recording permission.
+- Window mode reconstructs the frame region from public AppKit view-cache and PDF drawing APIs. It
+  does not capture WindowServer shadows, other applications, or occlusion state.
 - Browser-first presentation is the default. External-browser and experimental fullscreen paths
   require explicit action and never run as automatic fallbacks.
 

@@ -29,6 +29,7 @@ type Snapshot = {
     frame: Rect;
     contentFrame?: Rect;
     captureScope?: CaptureScope;
+    captureRendering?: "viewCache" | "windowFrameHybrid";
   };
   imageDataURL: string;
   root: Node;
@@ -265,6 +266,8 @@ function renderWorkspace(root: HTMLDivElement): void {
   }
   const snapshot = state.snapshot;
   const actualScope = snapshotCaptureScope(snapshot);
+  const hybridFrame = actualScope === "windowFrame" &&
+    snapshot.window.captureRendering === "windowFrameHybrid";
   const node = selectedNode ?? state.selected?.node;
   const treeRows = rows(snapshot.root)
     .map(
@@ -285,6 +288,7 @@ function renderWorkspace(root: HTMLDivElement): void {
           <button type="button" data-capture-scope="windowFrame" aria-pressed="${actualScope === "windowFrame"}" title="Include title bar and window controls">Window</button>
           <button type="button" data-capture-scope="content" aria-pressed="${actualScope === "content"}" title="Show only the application content view">Content</button>
         </div>
+        ${hybridFrame ? '<span class="capture-note" title="System toolbar materials are reconstructed with public AppKit drawing so controls stay readable without Screen Recording.">Hybrid AppKit</span>' : ""}
         <div class="zoom-controls" role="group" aria-label="Snapshot zoom">
           <button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom Out">−</button>
           <button type="button" id="zoom-fit" aria-label="Fit snapshot" aria-pressed="true" title="Fit Snapshot">Fit</button>

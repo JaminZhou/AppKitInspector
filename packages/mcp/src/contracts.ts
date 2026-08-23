@@ -38,6 +38,8 @@ export type ViewNode = {
 
 export const captureScopeSchema = z.enum(["content", "windowFrame"]);
 export type CaptureScope = z.infer<typeof captureScopeSchema>;
+export const captureRenderingSchema = z.enum(["viewCache", "windowFrameHybrid"]);
+export type CaptureRendering = z.infer<typeof captureRenderingSchema>;
 
 export const targetSchema = z.object({
   pid: z.number().int().positive(),
@@ -51,7 +53,7 @@ export const targetSchema = z.object({
 export const publicTargetSchema = targetSchema.omit({ token: true });
 
 export const snapshotSchema = z.object({
-  schemaVersion: z.union([z.literal(1), z.literal(2)]),
+  schemaVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   target: publicTargetSchema,
   window: z.object({
     id: z.string(),
@@ -59,6 +61,7 @@ export const snapshotSchema = z.object({
     frame: rectSchema,
     contentFrame: rectSchema.optional(),
     captureScope: captureScopeSchema.optional(),
+    captureRendering: captureRenderingSchema.optional(),
   }),
   imageDataURL: z.string().min(1),
   root: viewNodeSchema,

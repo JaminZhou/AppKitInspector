@@ -21,8 +21,10 @@ Supported methods:
 - `inspectPoint`: convert a normalized top-left image point to AppKit coordinates and return the
   deepest hit-tested view plus its ancestor path. It accepts the same `scope`.
 
-Schema version 2 includes `window.captureScope` and the content rectangle relative to the captured
-root. Schema version 1 remains accepted as a content-only compatibility response.
+Schema version 3 includes `window.captureRendering` in addition to the version-2
+`window.captureScope` and content-layout rectangle relative to the captured root. Schema version 1
+remains accepted as a content-only compatibility response, and schema version 2 remains accepted
+without rendering metadata.
 
 ## Inspector window
 
@@ -60,7 +62,10 @@ and content share one coordinate space. Refresh after moving or resizing the tar
 
 ## Capture scope
 
-The probe uses `cacheDisplay(in:to:)` inside the inspected process. Window mode captures the public
-AppKit frame-view hierarchy reached from `contentView.superview`, including title-bar controls and
-toolbars; Content mode captures `contentView`. Neither mode needs Screen Recording permission. Both
-exclude WindowServer shadows, other applications, and occlusion state.
+The probe captures entirely inside the inspected process with public AppKit APIs. Content mode uses
+`cacheDisplay(in:to:)` on `contentView`. Window mode keeps that live view-cache image for the content,
+uses `NSWindow.dataWithPDF(inside:)` for the frame region so modern hosted toolbar controls remain
+readable, and restores the real standard-window-button pixels from the view cache with circular
+clipping. Its `windowFrameHybrid` rendering is an annotation preview, not a pixel-exact replacement
+for WindowServer compositor effects such as glass and blur. Neither mode needs Screen Recording
+permission. Both exclude WindowServer shadows, other applications, and occlusion state.
