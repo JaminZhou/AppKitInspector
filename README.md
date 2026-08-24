@@ -4,19 +4,28 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 AppKit Inspector is a Debug-only bridge for inspecting a live native macOS AppKit interface from
-Codex. It captures the application's content view in-process, maps a clicked point to its `NSView`,
-shows hierarchy and geometry, and prepares precise visual feedback for a coding task.
+Codex. It captures the application's complete window frame or content view in-process, maps a
+clicked point to its `NSView`, shows hierarchy and geometry, and prepares precise visual feedback
+for a coding task.
 
 > **Public Preview:** APIs, plugin packaging, and presentation behavior may change before 1.0.
-> Codex Browser is the supported default surface. Fullscreen remains experimental and disabled by
-> default.
+> Codex Browser is the supported surface. Fullscreen remains experimental and disabled by default;
+> the plugin does not expose a system-browser/Chrome launch path.
 
 ## Features
 
-- Inspect a real AppKit window without Accessibility or Screen Recording permission.
+- Inspect a real AppKit window frame, title bar, traffic-light controls, toolbar, and content without
+  Accessibility or Screen Recording permission.
+- Choose **Exact** on macOS 14.4 or later to capture the inspected Debug process's own WindowServer
+  pixels through ScreenCaptureKit without Screen Recording permission or access to other apps.
+- Keep modern toolbar controls readable with a public-AppKit **Hybrid** fallback: the content stays on
+  the live view cache, while the frame region uses AppKit PDF drawing and restores the real standard
+  window buttons from the cache.
 - Click the captured interface and identify the deepest native `NSView`.
 - Review class names, frames, accessibility metadata, and ancestor paths.
-- Copy a feedback package containing the selected view, geometry, note, and private local artifacts.
+- Use Codex Browser's native comments to annotate one or many semantic AppKit view targets and
+  deliver them directly to the current Codex task. AppKit Inspector does not duplicate that UI with
+  its own notes, queue, clipboard, or send controls.
 - Keep discovery and transport authenticated on `127.0.0.1`.
 - Compile the probe out of active Release behavior with `#if DEBUG`.
 
@@ -57,11 +66,34 @@ Start a new Codex task so it loads the newly installed MCP tools, then ask:
 Use AppKit Inspector to connect to the running demo and open it in Codex Browser. The workflow
 explicitly presents the right Browser panel after navigation. In the Inspector, use **Fit**, **−**,
 and **+** to resize the snapshot; trackpad pinch and Command-modified scrolling also zoom.
+Use **Window** for title-bar and frame inspection or **Content** for a focused content-only view.
+Window mode starts with its permission-free Hybrid preview. Choose **Exact** for the current
+process's real WindowServer pixels; if the OS cannot provide them, the Inspector labels the honest
+Hybrid fallback and its reason. Use Content when only the content view matters.
+In Codex Browser, use its native comment mode. AppKit Inspector exposes each reviewable native view
+as a semantic comment target, so comments reach the current task with the specific AppKit class and
+hierarchy instead of targeting the whole screenshot. Multiple native comments can be submitted as
+one Codex message. Ordinary clicks still select views for hierarchy and geometry inspection.
 ```
 
 The default `open_appkit_inspector` tool creates a 60-second, single-use loopback URL for the
-current task's right Browser panel. It never requests fullscreen or invokes the system browser
-automatically. The external browser window is an explicit fallback.
+current task's right Browser panel. It never requests fullscreen or invokes the system browser.
+
+## Codex integration
+
+AppKit Inspector is currently adapted specifically for Codex desktop:
+
+- `open_appkit_inspector` prepares the authenticated URL that Codex opens in its right Browser
+  panel;
+- transparent semantic targets map Codex Browser comments to AppKit class, hierarchy, and frame
+  context;
+- Codex owns comment composition, multi-comment submission, delivery, and task history;
+- the Inspector owns capture, view selection, hierarchy, geometry, and target refresh only.
+
+This boundary deliberately avoids maintaining a second annotation system with different delivery
+and recovery behavior. If a host does not provide Codex Browser native comments, inspection remains
+readable and selectable, but comment delivery is unavailable rather than silently falling back to
+the clipboard or an external browser.
 
 ## Add the probe to an AppKit project
 
@@ -95,12 +127,11 @@ Never add or start the probe in Release, archive, TestFlight, or App Store build
 
 ## Presentation modes
 
-- **Codex Browser:** default and supported.
-- **External local window:** explicit fallback opened in the system default browser.
+- **Codex Browser:** supported product path.
 - **MCP App fullscreen:** experimental, disabled by default, and available only when the MCP server
   starts with `APPKIT_INSPECTOR_EXPERIMENTAL_FULLSCREEN=1`.
 
-No presentation failure automatically opens another window.
+No presentation failure opens Chrome, Safari, or another external window.
 
 ## Repository layout
 
@@ -120,16 +151,19 @@ swift build -c release
 
 For a live bridge check, run `make demo` in one terminal and `npm run test:live` in another. After
 changing `packages/app/` or `packages/mcp/`, run `npm run build` and include the matching generated
-files under `plugins/appkit-inspector/dist/`.
+files under `plugins/appkit-inspector/dist/`. The authenticated Browser uses a lightweight target
+status request to notice when the inspected Debug application is rebuilt; it follows a unique
+replacement with the same bundle identifier and refreshes the snapshot without reloading the page.
 
 ## Security and privacy
 
 The probe and Inspector servers bind only to loopback, require random credentials, and write
 user-private discovery data. Codex Browser launch links are single-use and become HttpOnly,
-same-site sessions. The project uses public AppKit and Foundation APIs and does not use injection,
-Accessibility automation, private frameworks, or Screen Recording.
+same-site sessions. The project uses public Apple SDK APIs and does not use injection, Accessibility
+automation, private frameworks, or Screen Recording permission. Exact Window is restricted to
+`SCShareableContent.currentProcess`, so it cannot enumerate or capture another process's windows.
 
-Captured screenshots, hierarchy data, notes, and review artifacts are sensitive. When used through
+Captured screenshots, hierarchy data, and Codex Browser comments are sensitive. When used through
 Codex they may become part of the Codex task under the user's product and workspace data controls.
 Read [SECURITY.md](SECURITY.md) before integrating the probe and use private security advisories for
 vulnerability reports.

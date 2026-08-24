@@ -22,4 +22,25 @@ final class ProbeModelsTests: XCTestCase {
         let data = try JSONEncoder().encode(rect)
         XCTAssertEqual(try JSONDecoder().decode(ProbeRect.self, from: data), rect)
     }
+
+    func testCaptureScopesRoundTrip() throws {
+        for scope in [ProbeCaptureScope.windowFrame, .content] {
+            let data = try JSONEncoder().encode(scope)
+            XCTAssertEqual(try JSONDecoder().decode(ProbeCaptureScope.self, from: data), scope)
+        }
+    }
+
+    func testCaptureRenderingModesRoundTrip() throws {
+        for rendering in [ProbeCaptureRendering.viewCache, .windowFrameHybrid, .windowServerExact] {
+            let data = try JSONEncoder().encode(rendering)
+            XCTAssertEqual(try JSONDecoder().decode(ProbeCaptureRendering.self, from: data), rendering)
+        }
+    }
+
+    func testCaptureModesRoundTrip() throws {
+        for mode in [ProbeCaptureMode.hybrid, .exact] {
+            let data = try JSONEncoder().encode(mode)
+            XCTAssertEqual(try JSONDecoder().decode(ProbeCaptureMode.self, from: data), mode)
+        }
+    }
 }

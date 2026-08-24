@@ -1,4 +1,4 @@
-import type { InspectResult, Snapshot, ViewNode } from "./contracts.js";
+import type { CaptureMode, CaptureScope, InspectResult, Snapshot, ViewNode } from "./contracts.js";
 
 const view = (
   id: string,
@@ -20,8 +20,7 @@ const view = (
   subviews,
 });
 
-const root = view("root", "NSThemeFrame", 0, 0, 960, 600, "Demo window", [
-  view("split", "NSSplitView", 0, 0, 960, 552, undefined, [
+const contentRoot = view("split", "NSSplitView", 0, 0, 960, 552, undefined, [
     view("sidebar", "NSVisualEffectView", 0, 0, 224, 552, "Sidebar", [
       view("sessions", "NSOutlineView", 12, 54, 200, 450, "Sessions"),
       view("add", "NSButton", 12, 14, 28, 28, "Add Folder"),
@@ -31,12 +30,19 @@ const root = view("root", "NSThemeFrame", 0, 0, 960, 600, "Demo window", [
       view("search", "NSSearchField", 260, 438, 320, 30, "Search events"),
       view("timeline", "NSCollectionView", 260, 24, 660, 390, "Timeline"),
     ]),
-  ]),
-  view("toolbar", "NSToolbarView", 0, 552, 960, 48, "Toolbar"),
 ]);
 
-function mockImageDataURL(): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600">
+const root = view("root", "NSThemeFrame", 0, 0, 960, 600, "Demo window", [
+  contentRoot,
+  view("toolbar", "NSToolbarView", 0, 552, 960, 48, "Toolbar"),
+  view("close", "NSButton", 16, 570, 12, 12, "Close Window"),
+  view("minimize", "NSButton", 36, 570, 12, 12, "Minimize Window"),
+  view("zoom", "NSButton", 56, 570, 12, 12, "Zoom Window"),
+]);
+
+function mockImageDataURL(scope: CaptureScope): string {
+  const contentOnly = scope === "content";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="${contentOnly ? 552 : 600}" viewBox="0 ${contentOnly ? 48 : 0} 960 ${contentOnly ? 552 : 600}">
   <defs><linearGradient id="bg" x2="0" y2="1"><stop stop-color="#f6f6f8"/><stop offset="1" stop-color="#ececf0"/></linearGradient></defs>
   <rect width="960" height="600" rx="12" fill="url(#bg)"/>
   <rect width="960" height="48" fill="#fafafbcc"/><path d="M0 48h960" stroke="#d5d5da"/>
@@ -54,9 +60,13 @@ function mockImageDataURL(): string {
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
-export function mockSnapshot(): Snapshot {
+export function mockSnapshot(
+  scope: CaptureScope = "windowFrame",
+  mode: CaptureMode = "hybrid",
+): Snapshot {
+  const contentOnly = scope === "content";
   return {
-    schemaVersion: 1,
+    schemaVersion: 4,
     target: {
       pid: 1,
       name: "AppKit Inspector Demo",
@@ -67,15 +77,27 @@ export function mockSnapshot(): Snapshot {
     window: {
       id: "window-main",
       title: "AppKit Inspector Demo",
-      frame: { x: 0, y: 0, width: 960, height: 600 },
+      frame: { x: 0, y: 0, width: 960, height: contentOnly ? 552 : 600 },
+      contentFrame: { x: 0, y: 0, width: 960, height: 552 },
+      captureScope: scope,
+      requestedCaptureMode: mode,
+      captureRendering: contentOnly ? "viewCache" : "windowFrameHybrid",
+      ...(mode === "exact" && !contentOnly
+        ? { captureFallbackReason: "Exact Window is unavailable for the built-in mock target" }
+        : {}),
     },
-    imageDataURL: mockImageDataURL(),
-    root,
+    imageDataURL: mockImageDataURL(scope),
+    root: contentOnly ? contentRoot : root,
   };
 }
 
-export function inspectMockPoint(x: number, y: number): InspectResult {
-  const snapshot = mockSnapshot();
+export function inspectMockPoint(
+  x: number,
+  y: number,
+  scope: CaptureScope = "windowFrame",
+  mode: CaptureMode = "hybrid",
+): InspectResult {
+  const snapshot = mockSnapshot(scope, mode);
   const pointX = x * snapshot.window.frame.width;
   const pointY = (1 - y) * snapshot.window.frame.height;
 

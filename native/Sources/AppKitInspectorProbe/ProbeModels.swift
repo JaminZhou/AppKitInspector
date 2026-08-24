@@ -54,10 +54,31 @@ public struct ProbeViewNode: Codable, Equatable, Sendable {
     public let subviews: [ProbeViewNode]
 }
 
+public enum ProbeCaptureScope: String, Codable, Equatable, Sendable {
+    case content
+    case windowFrame
+}
+
+public enum ProbeCaptureMode: String, Codable, Equatable, Sendable {
+    case hybrid
+    case exact
+}
+
+public enum ProbeCaptureRendering: String, Codable, Equatable, Sendable {
+    case viewCache
+    case windowFrameHybrid
+    case windowServerExact
+}
+
 public struct ProbeWindow: Codable, Equatable, Sendable {
     public let id: String
     public let title: String
     public let frame: ProbeRect
+    public let contentFrame: ProbeRect
+    public let captureScope: ProbeCaptureScope
+    public let requestedCaptureMode: ProbeCaptureMode
+    public let captureRendering: ProbeCaptureRendering
+    public let captureFallbackReason: String?
 }
 
 public struct ProbeSnapshot: Codable, Equatable, Sendable {

@@ -1,23 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectMockPoint, mockSnapshot } from "../src/mock.js";
+import type { CaptureMode, CaptureScope } from "../src/contracts.js";
 import { InspectorWindowServer } from "../src/window-server.js";
 
 test("standalone inspector supports fragment Bearer and single-use Browser sessions", async () => {
-  const opened: string[] = [];
-  const reviews: Array<{ selectedViewID: string | undefined; note: string }> = [];
+  const scopes: CaptureScope[] = [];
+  const modes: CaptureMode[] = [];
   const server = new InspectorWindowServer(
     {
-      async preview() {
-        return { connected: false, isMock: true, snapshot: mockSnapshot() };
+      async targetState() {
+        return { connected: false };
       },
-      async inspect(x, y) {
-        const selected = inspectMockPoint(x, y);
+      async preview(scope = "windowFrame", mode = "hybrid") {
+        scopes.push(scope);
+        modes.push(mode);
+        return { connected: false, isMock: true, snapshot: mockSnapshot(scope, mode) };
+      },
+      async inspect(x, y, scope = "windowFrame", mode = "hybrid") {
+        scopes.push(scope);
+        modes.push(mode);
+        const selected = inspectMockPoint(x, y, scope, mode);
         return { connected: false, isMock: true, snapshot: selected.snapshot, selected };
-      },
-      async saveReview(selectedViewID, note) {
-        reviews.push({ selectedViewID, note });
-        return { imagePath: "/private/review.png", contextPath: "/private/context.json" };
       },
     },
     {
@@ -26,9 +30,6 @@ test("standalone inspector supports fragment Bearer and single-use Browser sessi
           template: '<!doctype html><script type="module" src="./app.js"></script>',
           script: "export {};",
         };
-      },
-      async openURL(url) {
-        opened.push(url);
       },
     },
   );
@@ -47,6 +48,8 @@ test("standalone inspector supports fragment Bearer and single-use Browser sessi
 
     const unauthorized = await fetch(`${windowURL.origin}/api/snapshot`);
     assert.equal(unauthorized.status, 401);
+    const unauthorizedTarget = await fetch(`${windowURL.origin}/api/target`);
+    assert.equal(unauthorizedTarget.status, 401);
 
     const browserLaunch = new URL((await server.createBrowserLaunch()).url);
     assert.equal(browserLaunch.origin, windowURL.origin);
@@ -62,13 +65,19 @@ test("standalone inspector supports fragment Bearer and single-use Browser sessi
     assert.match(cookie, /SameSite=Strict/);
     const reused = await fetch(browserLaunch, { redirect: "manual" });
     assert.equal(reused.status, 401);
-    const browserSnapshot = await fetch(`${windowURL.origin}/api/snapshot`, {
+    const browserSnapshot = await fetch(`${windowURL.origin}/api/snapshot?scope=content&mode=exact`, {
       headers: { Cookie: cookie.split(";", 1)[0] ?? "" },
     });
     assert.equal(browserSnapshot.status, 200);
-    assert.equal((await browserSnapshot.json()).isMock, true);
+    const browserState = await browserSnapshot.json();
+    assert.equal(browserState.isMock, true);
+    assert.equal(browserState.snapshot.window.captureScope, "content");
+    assert.equal(browserState.snapshot.window.requestedCaptureMode, "exact");
 
     const authorization = { Authorization: `Bearer ${token}` };
+    const target = await fetch(`${windowURL.origin}/api/target`, { headers: authorization });
+    assert.equal(target.status, 200);
+    assert.deepEqual(await target.json(), { connected: false });
     const snapshot = await fetch(`${windowURL.origin}/api/snapshot`, { headers: authorization });
     assert.equal(snapshot.status, 200);
     assert.equal((await snapshot.json()).isMock, true);
@@ -76,29 +85,21 @@ test("standalone inspector supports fragment Bearer and single-use Browser sessi
     const wrongOrigin = await fetch(`${windowURL.origin}/api/inspect`, {
       method: "POST",
       headers: { ...authorization, "Content-Type": "application/json", Origin: "http://example.com" },
-      body: JSON.stringify({ x: 0.5, y: 0.5 }),
+      body: JSON.stringify({ x: 0.5, y: 0.5, scope: "windowFrame" }),
     });
     assert.equal(wrongOrigin.status, 403);
 
     const inspected = await fetch(`${windowURL.origin}/api/inspect`, {
       method: "POST",
       headers: { ...authorization, "Content-Type": "application/json", Origin: windowURL.origin },
-      body: JSON.stringify({ x: 0.5, y: 0.5 }),
+      body: JSON.stringify({ x: 0.5, y: 0.5, mode: "exact" }),
     });
     assert.equal(inspected.status, 200);
     assert.equal(typeof (await inspected.json()).selected?.node?.className, "string");
 
-    const review = await fetch(`${windowURL.origin}/api/review`, {
-      method: "POST",
-      headers: { ...authorization, "Content-Type": "application/json", Origin: windowURL.origin },
-      body: JSON.stringify({ selectedViewID: "view-1", note: "Tighten spacing" }),
-    });
-    assert.equal(review.status, 200);
-    assert.deepEqual(reviews, [{ selectedViewID: "view-1", note: "Tighten spacing" }]);
-
-    await server.open();
-    assert.equal(opened.length, 1);
-    assert.equal(opened[0], windowURL.toString());
+    assert.ok(scopes.includes("windowFrame"));
+    assert.ok(scopes.includes("content"));
+    assert.ok(modes.includes("exact"));
   } finally {
     await server.close();
   }

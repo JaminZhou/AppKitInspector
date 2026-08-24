@@ -12,7 +12,7 @@ const childEnvironment = Object.fromEntries(
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [resolve(root, "plugins/appkit-inspector/dist/server.js")],
-  env: { ...childEnvironment, APPKIT_INSPECTOR_NO_OPEN: "1" },
+  env: childEnvironment,
 });
 const client = new Client({ name: "appkit-inspector-smoke", version: "0.1.1" });
 
@@ -25,14 +25,16 @@ try {
     "connect_appkit_target",
     "open_appkit_inspector",
     "prepare_appkit_inspector_browser",
-    "open_appkit_inspector_window",
     "appkit_snapshot",
     "appkit_inspect_point",
-    "save_appkit_review",
   ]) {
     if (!names.has(required)) throw new Error(`Missing MCP tool: ${required}`);
   }
   for (const disabled of [
+    "open_appkit_inspector_window",
+    "wait_for_appkit_review",
+    "save_appkit_review",
+    "save_appkit_review_batch",
     "open_appkit_inspector_fullscreen",
     "begin_appkit_inspector_fullscreen",
     "confirm_appkit_inspector_fullscreen",
@@ -102,6 +104,14 @@ try {
   const rendered = await client.readResource({ uri: preview.uri });
   const resource = rendered.contents[0];
   const html = resource?.text ?? "";
+  if (!html.includes("native-comment-target") || !html.includes("data-appkit-hierarchy")) {
+    throw new Error("MCP App resource is missing semantic Codex Browser comment targets");
+  }
+  for (const removed of ["No annotations", "Send to Codex", "save_appkit_review_batch", "open_appkit_inspector_window"]) {
+    if (html.includes(removed)) {
+      throw new Error(`MCP App resource still exposes retired fallback UI or tools: ${removed}`);
+    }
+  }
   const htmlBytes = Buffer.byteLength(html);
   if (htmlBytes > 512 * 1_024) {
     throw new Error(`MCP App resource is too large to mount reliably (${htmlBytes} bytes)`);
@@ -118,8 +128,8 @@ try {
   if (html.includes('<script type="module" src="./app.js"></script>')) {
     throw new Error("MCP App resource still references an unavailable external script");
   }
-  if (!html.includes("mode-window") || !html.includes("open_appkit_inspector_window")) {
-    throw new Error("MCP App resource is missing its separate-window fallback");
+  if (!html.includes("mode-window")) {
+    throw new Error("MCP App resource is missing its authenticated Browser workspace");
   }
   for (const marker of [
     "mode-fullscreen",

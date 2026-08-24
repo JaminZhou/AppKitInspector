@@ -2,15 +2,34 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createServer, InspectorSession } from "../src/server.js";
+import type { Target } from "../src/contracts.js";
+import { createServer, InspectorSession, preferredTarget } from "../src/server.js";
 
-function inspectorWindow() {
-  let opened = 0;
+function target(pid: number, bundleIdentifier: string): Target {
   return {
-    window: {
-      async open() {
-        opened += 1;
-      },
+    pid,
+    name: bundleIdentifier,
+    bundleIdentifier,
+    port: 43_123,
+    token: "abcdefghijklmnopqrstuvwxyz0123456789",
+    startedAt: "2026-08-23T00:00:00Z",
+  };
+}
+
+test("target selection follows a relaunched instance of the same application", () => {
+  const previous = target(100, "com.example.inspected");
+  const replacement = target(101, "com.example.inspected");
+  const unrelated = target(102, "com.example.other");
+
+  assert.equal(preferredTarget([replacement, unrelated], previous), replacement);
+  assert.equal(preferredTarget([unrelated], previous), undefined);
+  assert.equal(preferredTarget([unrelated], undefined), unrelated);
+  assert.equal(preferredTarget([replacement, target(103, replacement.bundleIdentifier)], previous), undefined);
+});
+
+function inspectorBrowser() {
+  return {
+    browser: {
       async createBrowserLaunch() {
         return {
           url: "http://127.0.0.1:43123/launch?code=abcdefghijklmnopqrstuvwxyz0123456789",
@@ -18,13 +37,12 @@ function inspectorWindow() {
         };
       },
     },
-    opened: () => opened,
   };
 }
 
 test("default Inspector launch is Browser-first and never opens an external window", async () => {
-  const external = inspectorWindow();
-  const server = createServer(new InspectorSession(), external.window);
+  const host = inspectorBrowser();
+  const server = createServer(new InspectorSession(), host.browser);
   const client = new Client({ name: "appkit-inspector-test", version: "0.1.1" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -36,6 +54,10 @@ test("default Inspector launch is Browser-first and never opens an external wind
     assert.equal(names.has("open_appkit_inspector_fullscreen"), false);
     assert.equal(names.has("begin_appkit_inspector_fullscreen"), false);
     assert.equal(names.has("confirm_appkit_inspector_fullscreen"), false);
+    assert.equal(names.has("open_appkit_inspector_window"), false);
+    assert.equal(names.has("wait_for_appkit_review"), false);
+    assert.equal(names.has("save_appkit_review"), false);
+    assert.equal(names.has("save_appkit_review_batch"), false);
 
     const opened = await client.callTool({ name: "open_appkit_inspector", arguments: {} });
     assert.equal(opened.isError, undefined);
@@ -51,15 +73,14 @@ test("default Inspector launch is Browser-first and never opens an external wind
       (opened.structuredContent as { browserURL?: unknown } | undefined)?.browserURL,
       "http://127.0.0.1:43123/launch?code=abcdefghijklmnopqrstuvwxyz0123456789",
     );
-    assert.equal(external.opened(), 0);
   } finally {
     await client.close();
   }
 });
 
 test("experimental fullscreen is opt-in and has no automatic external fallback", async () => {
-  const external = inspectorWindow();
-  const server = createServer(new InspectorSession(), external.window, {
+  const host = inspectorBrowser();
+  const server = createServer(new InspectorSession(), host.browser, {
     enableExperimentalFullscreen: true,
   });
   const client = new Client({ name: "appkit-inspector-test", version: "0.1.1" });
@@ -88,7 +109,6 @@ test("experimental fullscreen is opt-in and has no automatic external fallback",
     });
     const launchID = (begun.structuredContent as { launchID?: unknown } | undefined)?.launchID;
     assert.equal(typeof launchID, "string");
-    assert.equal(external.opened(), 0);
 
     const confirmed = await client.callTool({
       name: "confirm_appkit_inspector_fullscreen",
@@ -106,7 +126,6 @@ test("experimental fullscreen is opt-in and has no automatic external fallback",
       (late.structuredContent as { confirmed?: unknown } | undefined)?.confirmed,
       false,
     );
-    assert.equal(external.opened(), 0);
   } finally {
     await client.close();
   }

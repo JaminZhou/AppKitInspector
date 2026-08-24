@@ -36,6 +36,17 @@ export type ViewNode = {
   subviews: ViewNode[];
 };
 
+export const captureScopeSchema = z.enum(["content", "windowFrame"]);
+export type CaptureScope = z.infer<typeof captureScopeSchema>;
+export const captureModeSchema = z.enum(["hybrid", "exact"]);
+export type CaptureMode = z.infer<typeof captureModeSchema>;
+export const captureRenderingSchema = z.enum([
+  "viewCache",
+  "windowFrameHybrid",
+  "windowServerExact",
+]);
+export type CaptureRendering = z.infer<typeof captureRenderingSchema>;
+
 export const targetSchema = z.object({
   pid: z.number().int().positive(),
   name: z.string().min(1),
@@ -48,12 +59,17 @@ export const targetSchema = z.object({
 export const publicTargetSchema = targetSchema.omit({ token: true });
 
 export const snapshotSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
   target: publicTargetSchema,
   window: z.object({
     id: z.string(),
     title: z.string(),
     frame: rectSchema,
+    contentFrame: rectSchema.optional(),
+    captureScope: captureScopeSchema.optional(),
+    requestedCaptureMode: captureModeSchema.optional(),
+    captureRendering: captureRenderingSchema.optional(),
+    captureFallbackReason: z.string().optional(),
   }),
   imageDataURL: z.string().min(1),
   root: viewNodeSchema,
@@ -74,11 +90,6 @@ export function flattenViews(root: ViewNode): ViewNode[] {
   return [root, ...root.subviews.flatMap(flattenViews)];
 }
 
-export function findView(root: ViewNode, id: string): ViewNode | undefined {
-  if (root.id === id) return root;
-  for (const child of root.subviews) {
-    const found = findView(child, id);
-    if (found) return found;
-  }
-  return undefined;
+export function snapshotCaptureScope(snapshot: Snapshot): CaptureScope {
+  return snapshot.window.captureScope ?? "content";
 }

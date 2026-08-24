@@ -19,11 +19,10 @@ try {
   if (!Array.isArray(targets) || targets.length === 0) {
     throw new Error("No live target. Run AppKitInspectorDemo before this smoke test.");
   }
-  const target = targets[0];
+  const target = targets.find((candidate) => candidate.bundleIdentifier === "local.AppKitInspectorDemo")
+    ?? (targets.length === 1 ? targets[0] : undefined);
   if (!target || typeof target.pid !== "number") throw new Error("Invalid live target record");
-  if (targets.length > 1) {
-    await client.callTool({ name: "connect_appkit_target", arguments: { pid: target.pid } });
-  }
+  await client.callTool({ name: "connect_appkit_target", arguments: { pid: target.pid } });
   const opened = await client.callTool({ name: "open_appkit_inspector", arguments: {} });
   const launchState = opened.structuredContent;
   if (launchState?.connected !== true || launchState?.target?.pid !== target.pid) {
@@ -34,7 +33,10 @@ try {
     throw new Error("MCP did not return a loopback Codex Browser launch URL");
   }
   if (launchState.snapshot) throw new Error("Browser launch returned a full snapshot before page load");
-  const refreshed = await client.callTool({ name: "appkit_snapshot", arguments: {} });
+  const refreshed = await client.callTool({
+    name: "appkit_snapshot",
+    arguments: { scope: "windowFrame" },
+  });
   const state = refreshed.structuredContent;
   if (state?.connected !== true || state?.isMock !== false) {
     throw new Error("MCP App did not fetch the live target after mount");
@@ -42,15 +44,88 @@ try {
   if (!String(state.snapshot?.imageDataURL ?? "").startsWith("data:image/png;base64,")) {
     throw new Error("Live target did not return an AppKit PNG snapshot");
   }
+  if (state.snapshot?.window?.captureScope !== "windowFrame") {
+    throw new Error("Live target did not return the Window Frame capture scope");
+  }
+  if (state.snapshot?.schemaVersion !== 4) {
+    throw new Error("Live target did not return the Window Frame schema version");
+  }
+  if (state.snapshot?.window?.captureRendering !== "windowFrameHybrid") {
+    throw new Error("Live target did not return the hybrid AppKit Window Frame rendering");
+  }
+  const exact = await client.callTool({
+    name: "appkit_snapshot",
+    arguments: { scope: "windowFrame", mode: "exact" },
+  });
+  if (exact.structuredContent?.snapshot?.window?.requestedCaptureMode !== "exact") {
+    throw new Error("Live target did not preserve the Exact Window request");
+  }
+  if (exact.structuredContent?.snapshot?.window?.captureRendering !== "windowServerExact") {
+    const reason = exact.structuredContent?.snapshot?.window?.captureFallbackReason ?? "no reason";
+    throw new Error(`Live target did not return Exact Window rendering (${reason})`);
+  }
+  const views = [];
+  const collect = (node) => {
+    if (!node) return;
+    views.push(node);
+    for (const child of node.subviews ?? []) collect(child);
+  };
+  collect(state.snapshot.root);
+  const closeButton = views.find((view) => view.label === "Close Window");
+  if (!closeButton) throw new Error("Window Frame hierarchy is missing the Close Window control");
+  const windowFrame = state.snapshot.window.frame;
+  const closePoint = {
+    x: (closeButton.frame.x + closeButton.frame.width / 2) / windowFrame.width,
+    y: 1 - (closeButton.frame.y + closeButton.frame.height / 2) / windowFrame.height,
+  };
   const inspected = await client.callTool({
     name: "appkit_inspect_point",
-    arguments: { x: 0.5, y: 0.5 },
+    arguments: { ...closePoint, scope: "windowFrame" },
   });
-  if (!inspected.structuredContent?.selected?.node?.className) {
-    throw new Error("Live point inspection did not return an NSView");
+  if (inspected.structuredContent?.selected?.node?.label !== "Close Window") {
+    throw new Error("Window Frame point inspection did not select the Close Window control");
+  }
+  const content = await client.callTool({
+    name: "appkit_snapshot",
+    arguments: { scope: "content" },
+  });
+  if (content.structuredContent?.snapshot?.window?.captureScope !== "content") {
+    throw new Error("Live target did not switch to the Content capture scope");
+  }
+  if (content.structuredContent?.snapshot?.window?.captureRendering !== "viewCache") {
+    throw new Error("Content capture did not use the AppKit view cache");
+  }
+  const launchResponse = await fetch(opened.structuredContent.browserURL, {
+    redirect: "manual",
+  });
+  const setCookie = launchResponse.headers.get("set-cookie");
+  if (launchResponse.status !== 303 || !setCookie) {
+    throw new Error("Browser launch did not establish an authenticated Inspector session");
+  }
+  const browserOrigin = new URL(opened.structuredContent.browserURL).origin;
+  const browserCookie = setCookie.split(";", 1)[0];
+  const browserSnapshot = await fetch(new URL("/api/snapshot?scope=windowFrame&mode=hybrid", browserOrigin), {
+    headers: { Cookie: browserCookie },
+  });
+  if (!browserSnapshot.ok) {
+    throw new Error(`Authenticated Browser snapshot failed with HTTP ${browserSnapshot.status}`);
+  }
+  const browserState = await browserSnapshot.json();
+  if (browserState.snapshot?.target?.pid !== target.pid) {
+    throw new Error("Authenticated Browser session did not preserve the connected target");
+  }
+  const browserScript = await fetch(new URL("/app.js", browserOrigin));
+  const browserScriptText = await browserScript.text();
+  if (!browserScript.ok || !browserScriptText.includes("native-comment-target")) {
+    throw new Error("Browser app does not expose semantic Codex comment targets");
+  }
+  for (const retired of ["wait_for_appkit_review", "save_appkit_review_batch", "open_appkit_inspector_window"]) {
+    if (browserScriptText.includes(retired)) {
+      throw new Error(`Browser app still contains retired fallback path: ${retired}`);
+    }
   }
   process.stdout.write(
-    `Connected to ${target.name} (${target.pid}); selected ${inspected.structuredContent.selected.node.className}.\n`,
+    `Connected to ${target.name} (${target.pid}); verified Hybrid, Exact Window, Close Window selection, Content mode, and Codex Browser semantic comment targets.\n`,
   );
   if (process.env.APPKIT_INSPECTOR_PREPARE_BROWSER === "1") {
     const browser = await client.callTool({

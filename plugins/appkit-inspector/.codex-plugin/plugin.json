@@ -1,7 +1,7 @@
 {
   "name": "appkit-inspector",
-  "version": "0.1.1",
-  "description": "Inspect live native AppKit interfaces in Codex Browser, with explicit local-window and experimental fullscreen options.",
+  "version": "0.1.1+codex.20260824135317",
+  "description": "Inspect live native AppKit interfaces and comment on semantic views in Codex Browser.",
   "author": {
     "name": "Jamin Zhou"
   },
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "AppKit Inspector",
     "shortDescription": "Inspect native macOS views in Codex Browser.",
-    "longDescription": "Connect a Debug AppKit application from Codex, open an authenticated Inspector in the current Codex Browser, click native views, inspect hierarchy and geometry, and copy precise visual feedback back to Codex. External windows are explicit and fullscreen remains experimental.",
+    "longDescription": "Connect a Debug AppKit application from Codex, open an authenticated Inspector in the current Codex Browser, and use Codex native comments on semantic AppKit view targets. The plugin has no separate annotation queue, clipboard delivery, or external-browser launch path; fullscreen remains experimental.",
     "developerName": "Jamin Zhou",
     "category": "Developer",
     "capabilities": [

@@ -7,8 +7,11 @@ MCP App. Keep it independent from any inspected product repository.
 
 ## Safety boundary
 
-- Use public AppKit and Foundation APIs only.
-- Do not add code injection, private frameworks, Accessibility automation, or Screen Recording.
+- Use public Apple SDK APIs only. ScreenCaptureKit is limited to the inspected Debug process's own
+  windows through `SCShareableContent.currentProcess`; never request Screen Recording permission or
+  enumerate capture content owned by another process.
+- Do not add code injection, private frameworks, Accessibility automation, or Screen Recording
+  permission.
 - Keep discovery on a user-private path and transport on authenticated `127.0.0.1` only.
 - Never make the probe active in Release, archive, TestFlight, or App Store builds.
 - Treat captured UI and hierarchy data as private local content.
