@@ -8,8 +8,7 @@ var __export = (target, all) => {
 // packages/mcp/src/server.ts
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { chmod, mkdtemp, readFile as readFile3, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile as readFile3 } from "node:fs/promises";
 import { join as join3 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
@@ -29191,7 +29190,12 @@ var viewNodeSchema = external_exports.lazy(
   })
 );
 var captureScopeSchema = external_exports.enum(["content", "windowFrame"]);
-var captureRenderingSchema = external_exports.enum(["viewCache", "windowFrameHybrid"]);
+var captureModeSchema = external_exports.enum(["hybrid", "exact"]);
+var captureRenderingSchema = external_exports.enum([
+  "viewCache",
+  "windowFrameHybrid",
+  "windowServerExact"
+]);
 var targetSchema = external_exports.object({
   pid: external_exports.number().int().positive(),
   name: external_exports.string().min(1),
@@ -29202,7 +29206,7 @@ var targetSchema = external_exports.object({
 });
 var publicTargetSchema = targetSchema.omit({ token: true });
 var snapshotSchema = external_exports.object({
-  schemaVersion: external_exports.union([external_exports.literal(1), external_exports.literal(2), external_exports.literal(3)]),
+  schemaVersion: external_exports.union([external_exports.literal(1), external_exports.literal(2), external_exports.literal(3), external_exports.literal(4)]),
   target: publicTargetSchema,
   window: external_exports.object({
     id: external_exports.string(),
@@ -29210,7 +29214,9 @@ var snapshotSchema = external_exports.object({
     frame: rectSchema,
     contentFrame: rectSchema.optional(),
     captureScope: captureScopeSchema.optional(),
-    captureRendering: captureRenderingSchema.optional()
+    requestedCaptureMode: captureModeSchema.optional(),
+    captureRendering: captureRenderingSchema.optional(),
+    captureFallbackReason: external_exports.string().optional()
   }),
   imageDataURL: external_exports.string().min(1),
   root: viewNodeSchema
@@ -29272,10 +29278,10 @@ function mockImageDataURL(scope) {
   </svg>`;
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
-function mockSnapshot(scope = "windowFrame") {
+function mockSnapshot(scope = "windowFrame", mode = "hybrid") {
   const contentOnly = scope === "content";
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     target: {
       pid: 1,
       name: "AppKit Inspector Demo",
@@ -29289,14 +29295,16 @@ function mockSnapshot(scope = "windowFrame") {
       frame: { x: 0, y: 0, width: 960, height: contentOnly ? 552 : 600 },
       contentFrame: { x: 0, y: 0, width: 960, height: 552 },
       captureScope: scope,
-      captureRendering: contentOnly ? "viewCache" : "windowFrameHybrid"
+      requestedCaptureMode: mode,
+      captureRendering: contentOnly ? "viewCache" : "windowFrameHybrid",
+      ...mode === "exact" && !contentOnly ? { captureFallbackReason: "Exact Window is unavailable for the built-in mock target" } : {}
     },
     imageDataURL: mockImageDataURL(scope),
     root: contentOnly ? contentRoot : root
   };
 }
-function inspectMockPoint(x, y, scope = "windowFrame") {
-  const snapshot = mockSnapshot(scope);
+function inspectMockPoint(x, y, scope = "windowFrame", mode = "hybrid") {
+  const snapshot = mockSnapshot(scope, mode);
   const pointX = x * snapshot.window.frame.width;
   const pointY = (1 - y) * snapshot.window.frame.height;
   const visit = (node, path) => {
@@ -29350,11 +29358,13 @@ async function discoverTargets() {
 function publicTarget(target) {
   return publicTargetSchema.parse(target);
 }
-async function requestSnapshot(target, scope = "windowFrame") {
-  return snapshotSchema.parse(await request(target, { method: "snapshot", scope }));
+async function requestSnapshot(target, scope = "windowFrame", mode = "hybrid") {
+  return snapshotSchema.parse(await request(target, { method: "snapshot", scope, mode }));
 }
-async function requestInspectPoint(target, x, y, scope = "windowFrame") {
-  return inspectResultSchema.parse(await request(target, { method: "inspectPoint", x, y, scope }));
+async function requestInspectPoint(target, x, y, scope = "windowFrame", mode = "hybrid") {
+  return inspectResultSchema.parse(
+    await request(target, { method: "inspectPoint", x, y, scope, mode })
+  );
 }
 async function request(target, payload) {
   return await new Promise((resolve, reject) => {
@@ -29401,21 +29411,11 @@ import { readFile as readFile2 } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join as join2 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFile } from "node:child_process";
 var MAX_REQUEST_BYTES = 64 * 1024;
 var MAX_RESPONSE_BYTES2 = 64 * 1024 * 1024;
 var BROWSER_LAUNCH_TTL_MS = 6e4;
 var BROWSER_SESSION_TTL_MS = 8 * 60 * 60 * 1e3;
 var SESSION_COOKIE = "appkit_inspector_session";
-function defaultOpenURL(url2) {
-  if (process.env.APPKIT_INSPECTOR_NO_OPEN === "1") return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    execFile("/usr/bin/open", ["-n", url2], (error51) => {
-      if (error51) reject(error51);
-      else resolve();
-    });
-  });
-}
 async function defaultLoadAssets() {
   const directory = fileURLToPath(new URL(".", import.meta.url));
   const [template, script] = await Promise.all([
@@ -29446,6 +29446,9 @@ function sendJSON(response, status, value) {
 function captureScope(value) {
   return captureScopeSchema.catch("windowFrame").parse(value);
 }
+function captureMode(value) {
+  return captureModeSchema.catch("hybrid").parse(value);
+}
 async function readJSON(request2) {
   const chunks = [];
   let length = 0;
@@ -29465,12 +29468,10 @@ var InspectorWindowServer = class {
   constructor(backend, options = {}) {
     this.backend = backend;
     this.loadAssets = options.loadAssets ?? defaultLoadAssets;
-    this.openURL = options.openURL ?? defaultOpenURL;
   }
   backend;
   token = randomBytes(32).toString("base64url");
   loadAssets;
-  openURL;
   server;
   origin;
   startPromise;
@@ -29485,9 +29486,6 @@ var InspectorWindowServer = class {
     } finally {
       this.startPromise = void 0;
     }
-  }
-  async open() {
-    await this.openURL(await this.start());
   }
   async createBrowserLaunch() {
     await this.start();
@@ -29592,8 +29590,19 @@ var InspectorWindowServer = class {
       sendJSON(response, 403, { error: "Inspector origin check failed" });
       return;
     }
+    if (request2.method === "GET" && url2.pathname === "/api/target") {
+      sendJSON(response, 200, await this.backend.targetState());
+      return;
+    }
     if (request2.method === "GET" && url2.pathname === "/api/snapshot") {
-      sendJSON(response, 200, await this.backend.preview(captureScope(url2.searchParams.get("scope"))));
+      sendJSON(
+        response,
+        200,
+        await this.backend.preview(
+          captureScope(url2.searchParams.get("scope")),
+          captureMode(url2.searchParams.get("mode"))
+        )
+      );
       return;
     }
     if (request2.method === "POST" && url2.pathname === "/api/inspect") {
@@ -29604,21 +29613,10 @@ var InspectorWindowServer = class {
         sendJSON(response, 400, { error: "Inspect coordinates must be between 0 and 1" });
         return;
       }
-      sendJSON(response, 200, await this.backend.inspect(x, y, captureScope(body.scope)));
-      return;
-    }
-    if (request2.method === "POST" && url2.pathname === "/api/review") {
-      const body = await readJSON(request2);
-      const selectedViewID = body.selectedViewID;
-      const note = body.note;
-      if (typeof selectedViewID !== "string" || typeof note !== "string" || note.length > 8e3) {
-        sendJSON(response, 400, { error: "Review requires a view id and note up to 8,000 characters" });
-        return;
-      }
       sendJSON(
         response,
         200,
-        await this.backend.saveReview(selectedViewID, note, captureScope(body.scope))
+        await this.backend.inspect(x, y, captureScope(body.scope), captureMode(body.mode))
       );
       return;
     }
@@ -29651,7 +29649,7 @@ var InspectorWindowServer = class {
 
 // packages/mcp/src/server.ts
 var VERSION = "0.1.1";
-var RESOURCE_REVISION = true ? "c61fc9c71e449d0b" : "development";
+var RESOURCE_REVISION = true ? "6f4e24ba1048f5ee" : "development";
 function installedPluginVersion() {
   try {
     const manifest = JSON.parse(
@@ -29666,6 +29664,15 @@ function installedPluginVersion() {
 }
 var RESOURCE_URI = `ui://appkit-inspector/${encodeURIComponent(installedPluginVersion())}/${RESOURCE_REVISION}/preview.html`;
 var RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
+function preferredTarget(targets, current) {
+  if (!current) return targets.length === 1 ? targets[0] : void 0;
+  const exact = targets.find((target) => target.pid === current.pid);
+  if (exact) return exact;
+  const sameApplication = targets.filter(
+    (target) => target.bundleIdentifier === current.bundleIdentifier
+  );
+  return sameApplication.length === 1 ? sameApplication[0] : void 0;
+}
 function toolResult(text, structuredContent, isError = false) {
   return {
     content: [{ type: "text", text }],
@@ -29692,30 +29699,31 @@ var InspectorSession = class {
   selectedTarget;
   async launchState() {
     const targets = await this.targets();
-    const selected = this.selectedTarget ? targets.find((target) => target.pid === this.selectedTarget?.pid) : targets.length === 1 ? targets[0] : void 0;
+    const selected = preferredTarget(targets, this.selectedTarget);
     if (!selected) {
-      delete this.selectedTarget;
       return { connected: false };
     }
     this.selectedTarget = selected;
     return { connected: true, target: publicTarget(selected) };
   }
-  async liveSnapshot(scope = "windowFrame") {
+  async targetState() {
+    return await this.launchState();
+  }
+  async liveSnapshot(scope = "windowFrame", mode = "hybrid") {
     if (this.selectedTarget) {
       try {
         return {
           target: this.selectedTarget,
-          snapshot: await requestSnapshot(this.selectedTarget, scope)
+          snapshot: await requestSnapshot(this.selectedTarget, scope, mode)
         };
       } catch {
-        delete this.selectedTarget;
       }
     }
     const targets = await this.targets();
-    if (targets.length !== 1 || !targets[0]) return void 0;
+    const target = preferredTarget(targets, this.selectedTarget);
+    if (!target) return void 0;
     try {
-      const target = targets[0];
-      const snapshot = await requestSnapshot(target, scope);
+      const snapshot = await requestSnapshot(target, scope, mode);
       this.selectedTarget = target;
       return { target, snapshot };
     } catch {
@@ -29737,18 +29745,21 @@ var InspectorSession = class {
     this.selectedTarget = target;
     return target;
   }
-  async preview(scope = "windowFrame") {
-    const live = await this.liveSnapshot(scope);
-    if (!live) return { connected: false, isMock: true, snapshot: mockSnapshot(scope) };
+  async preview(scope = "windowFrame", mode = "hybrid") {
+    const live = await this.liveSnapshot(scope, mode);
+    if (!live) {
+      const snapshot = mockSnapshot(scope, mode);
+      return { connected: false, isMock: true, snapshot };
+    }
     return {
       connected: true,
       isMock: false,
       snapshot: live.snapshot
     };
   }
-  async inspect(x, y, scope = "windowFrame") {
-    if (!this.selectedTarget) await this.liveSnapshot(scope);
-    const selected = this.selectedTarget ? await requestInspectPoint(this.selectedTarget, x, y, scope) : inspectMockPoint(x, y, scope);
+  async inspect(x, y, scope = "windowFrame", mode = "hybrid") {
+    if (!this.selectedTarget) await this.liveSnapshot(scope, mode);
+    const selected = this.selectedTarget ? await requestInspectPoint(this.selectedTarget, x, y, scope, mode) : inspectMockPoint(x, y, scope, mode);
     return {
       connected: Boolean(this.selectedTarget),
       isMock: !this.selectedTarget,
@@ -29756,26 +29767,8 @@ var InspectorSession = class {
       selected
     };
   }
-  async saveReview(selectedViewID, note, scope = "windowFrame") {
-    const { snapshot } = await this.preview(scope);
-    const imageDataURL = snapshot.imageDataURL;
-    const match = /^data:image\/(png|svg\+xml);base64,([A-Za-z0-9+/=]+)$/.exec(imageDataURL);
-    if (!match?.[1] || !match[2]) throw new Error("Unsupported review image data URL");
-    const directory = await mkdtemp(join3(tmpdir(), "appkit-inspector-review-"));
-    await chmod(directory, 448);
-    const extension = match[1] === "png" ? "png" : "svg";
-    const imagePath = join3(directory, `review-${randomUUID()}.${extension}`);
-    const contextPath = join3(directory, "context.json");
-    await writeFile(imagePath, Buffer.from(match[2], "base64"), { mode: 384 });
-    await writeFile(
-      contextPath,
-      JSON.stringify({ selectedViewID, note, scope, createdAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
-      { mode: 384 }
-    );
-    return { imagePath, contextPath };
-  }
 };
-function createServer2(session = new InspectorSession(), inspectorWindow = new InspectorWindowServer(session), options = {}) {
+function createServer2(session = new InspectorSession(), inspectorBrowser = new InspectorWindowServer(session), options = {}) {
   const server = new McpServer({ name: "AppKit Inspector", version: VERSION });
   const experimentalFullscreenEnabled = options.enableExperimentalFullscreen ?? process.env.APPKIT_INSPECTOR_EXPERIMENTAL_FULLSCREEN === "1";
   const fullscreenLaunches = /* @__PURE__ */ new Set();
@@ -29789,16 +29782,16 @@ function createServer2(session = new InspectorSession(), inspectorWindow = new I
   );
   server.close = async () => {
     fullscreenLaunches.clear();
-    await inspectorWindow.close?.();
+    await inspectorBrowser.close?.();
     await closeServer();
   };
   const prepareBrowserLaunch = async () => {
-    if (!inspectorWindow.createBrowserLaunch) {
+    if (!inspectorBrowser.createBrowserLaunch) {
       return toolResult("This Inspector build cannot create a Browser session.", {}, true);
     }
     const [state, launch] = await Promise.all([
       session.launchState(),
-      inspectorWindow.createBrowserLaunch()
+      inspectorBrowser.createBrowserLaunch()
     ]);
     return toolResult(
       "Prepared AppKit Inspector for Codex Browser. Open browserURL immediately, then set Codex Browser visibility to true; the URL expires in 60 seconds.",
@@ -29912,30 +29905,19 @@ function createServer2(session = new InspectorSession(), inspectorWindow = new I
     );
   }
   server.registerTool(
-    "open_appkit_inspector_window",
-    {
-      title: "Reopen AppKit Inspector window",
-      description: "Explicitly open the authenticated Inspector in the system default browser. Use only when the user requests it or chooses it after the Codex Browser fails.",
-      inputSchema: {},
-      _meta: outputMetadata(["model", "app"])
-    },
-    async () => {
-      const state = await session.launchState();
-      await inspectorWindow.open();
-      return toolResult("Opened the separate local Inspector window.", state);
-    }
-  );
-  server.registerTool(
     "appkit_snapshot",
     {
       title: "Refresh AppKit snapshot",
       description: "Refresh the current window-frame or content screenshot and native view hierarchy.",
-      inputSchema: { scope: captureScopeSchema.optional() },
+      inputSchema: {
+        scope: captureScopeSchema.optional(),
+        mode: captureModeSchema.optional()
+      },
       annotations: { readOnlyHint: true },
       _meta: outputMetadata("app", true)
     },
-    async ({ scope }) => {
-      const state = await session.preview(scope);
+    async ({ scope, mode }) => {
+      const state = await session.preview(scope, mode);
       return toolResult("Refreshed AppKit snapshot.", state);
     }
   );
@@ -29947,13 +29929,14 @@ function createServer2(session = new InspectorSession(), inspectorWindow = new I
       inputSchema: {
         x: external_exports.number().min(0).max(1),
         y: external_exports.number().min(0).max(1),
-        scope: captureScopeSchema.optional()
+        scope: captureScopeSchema.optional(),
+        mode: captureModeSchema.optional()
       },
       annotations: { readOnlyHint: true },
       _meta: outputMetadata("app", true)
     },
-    async ({ x, y, scope }) => {
-      const state = await session.inspect(x, y, scope);
+    async ({ x, y, scope, mode }) => {
+      const state = await session.inspect(x, y, scope, mode);
       const node = state.selected?.node;
       return toolResult(
         node ? `Selected ${node.className}${node.label ? ` (${node.label})` : ""}.` : "No view selected.",
@@ -29961,28 +29944,11 @@ function createServer2(session = new InspectorSession(), inspectorWindow = new I
       );
     }
   );
-  server.registerTool(
-    "save_appkit_review",
-    {
-      title: "Save AppKit review",
-      description: "Save the current local preview image for a message sent from the embedded app.",
-      inputSchema: {
-        selectedViewID: external_exports.string().optional(),
-        note: external_exports.string().max(8e3),
-        scope: captureScopeSchema.optional()
-      },
-      _meta: outputMetadata("app")
-    },
-    async ({ selectedViewID, note, scope }) => {
-      const { imagePath, contextPath } = await session.saveReview(selectedViewID, note, scope);
-      return toolResult("Saved local AppKit review artifacts.", { imagePath, contextPath });
-    }
-  );
   server.registerResource(
     "AppKit Inspector preview",
     RESOURCE_URI,
     {
-      description: "Interactive local AppKit screenshot, hierarchy, selection, and review surface.",
+      description: "Interactive local AppKit screenshot, hierarchy, selection, and Codex comment-target surface.",
       mimeType: RESOURCE_MIME_TYPE
     },
     async (uri) => {
@@ -30021,6 +29987,7 @@ export {
   InspectorSession,
   createServer2 as createServer,
   flattenViews,
+  preferredTarget,
   runServer
 };
 /*! Bundled license information:

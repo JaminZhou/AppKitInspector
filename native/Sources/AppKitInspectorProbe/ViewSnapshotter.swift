@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+@preconcurrency import ScreenCaptureKit
 
 @MainActor
 enum ViewSnapshotter {
@@ -12,8 +13,9 @@ enum ViewSnapshotter {
 
     static func snapshot(
         target: ProbeTarget,
-        scope: ProbeCaptureScope = .windowFrame
-    ) throws -> ProbeSnapshot {
+        scope: ProbeCaptureScope = .windowFrame,
+        mode: ProbeCaptureMode = .hybrid
+    ) async throws -> ProbeSnapshot {
         let context = try captureContext(scope: scope)
         let rootView = context.rootView
         rootView.displayIfNeeded()
@@ -21,12 +23,11 @@ enum ViewSnapshotter {
             throw ProbeError.captureFailed
         }
         rootView.cacheDisplay(in: rootView.bounds, to: bitmap)
-        guard let capture = capturePNG(context: context, bitmap: bitmap) else {
-            throw ProbeError.captureFailed
-        }
+        let rootNode = viewNode(rootView, relativeTo: rootView, window: context.window)
+        let capture = try await capturePNG(context: context, bitmap: bitmap, mode: mode)
 
         return ProbeSnapshot(
-            schemaVersion: 3,
+            schemaVersion: 4,
             target: target,
             window: ProbeWindow(
                 id: objectID(context.window),
@@ -34,10 +35,12 @@ enum ViewSnapshotter {
                 frame: ProbeRect(rootView.bounds),
                 contentFrame: ProbeRect(contentLayoutFrame(context: context)),
                 captureScope: context.scope,
-                captureRendering: capture.rendering
+                requestedCaptureMode: mode,
+                captureRendering: capture.rendering,
+                captureFallbackReason: capture.fallbackReason
             ),
             imageDataURL: "data:image/png;base64,\(capture.png.base64EncodedString())",
-            root: viewNode(rootView, relativeTo: rootView, window: context.window)
+            root: rootNode
         )
     }
 
@@ -45,8 +48,9 @@ enum ViewSnapshotter {
         x: Double,
         y: Double,
         target: ProbeTarget,
-        scope: ProbeCaptureScope = .windowFrame
-    ) throws -> ProbeInspectResult {
+        scope: ProbeCaptureScope = .windowFrame,
+        mode: ProbeCaptureMode = .hybrid
+    ) async throws -> ProbeInspectResult {
         let context = try captureContext(scope: scope)
         let rootView = context.rootView
         let point = CGPoint(
@@ -62,7 +66,7 @@ enum ViewSnapshotter {
             cursor = view.superview
         }
         return ProbeInspectResult(
-            snapshot: try snapshot(target: target, scope: context.scope),
+            snapshot: try await snapshot(target: target, scope: context.scope, mode: mode),
             node: viewNode(hitView, relativeTo: rootView, window: context.window),
             ancestorPath: ancestors.reversed()
         )
@@ -112,16 +116,123 @@ enum ViewSnapshotter {
         return context.rootView.convert(context.window.contentLayoutRect, from: nil)
     }
 
+    private struct CaptureResult {
+        let png: Data
+        let rendering: ProbeCaptureRendering
+        let fallbackReason: String?
+    }
+
     private static func capturePNG(
         context: CaptureContext,
-        bitmap: NSBitmapImageRep
-    ) -> (png: Data, rendering: ProbeCaptureRendering)? {
+        bitmap: NSBitmapImageRep,
+        mode: ProbeCaptureMode
+    ) async throws -> CaptureResult {
+        if context.scope == .windowFrame, mode == .exact {
+            do {
+                let png = try await exactWindowFramePNG(context: context)
+                return CaptureResult(
+                    png: png,
+                    rendering: .windowServerExact,
+                    fallbackReason: nil
+                )
+            } catch {
+                guard let png = hybridWindowFramePNG(context: context, cachedBitmap: bitmap) else {
+                    throw error
+                }
+                let reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                return CaptureResult(
+                    png: png,
+                    rendering: .windowFrameHybrid,
+                    fallbackReason: reason
+                )
+            }
+        }
         if context.scope == .windowFrame,
            let png = hybridWindowFramePNG(context: context, cachedBitmap: bitmap) {
-            return (png, .windowFrameHybrid)
+            return CaptureResult(
+                png: png,
+                rendering: .windowFrameHybrid,
+                fallbackReason: nil
+            )
         }
-        guard let png = bitmap.representation(using: .png, properties: [:]) else { return nil }
-        return (png, .viewCache)
+        guard let png = bitmap.representation(using: .png, properties: [:]) else {
+            throw ProbeError.captureFailed
+        }
+        return CaptureResult(png: png, rendering: .viewCache, fallbackReason: nil)
+    }
+
+    private static func exactWindowFramePNG(context: CaptureContext) async throws -> Data {
+        guard #available(macOS 14.4, *) else {
+            throw ProbeError.exactCaptureUnavailable("Exact Window requires macOS 14.4 or later")
+        }
+
+        let content = try await currentProcessShareableContent()
+        let windowID = CGWindowID(context.window.windowNumber)
+        guard let capturedWindow = content.windows.first(where: { $0.windowID == windowID }) else {
+            throw ProbeError.exactCaptureUnavailable("The current AppKit window is not available to ScreenCaptureKit")
+        }
+
+        let configuration = SCStreamConfiguration()
+        let scale = max(1, context.window.backingScaleFactor)
+        configuration.width = max(1, Int((context.rootView.bounds.width * scale).rounded()))
+        configuration.height = max(1, Int((context.rootView.bounds.height * scale).rounded()))
+        configuration.scalesToFit = true
+        configuration.preservesAspectRatio = true
+        configuration.showsCursor = false
+        configuration.ignoreShadowsSingleWindow = true
+        configuration.captureResolution = .best
+
+        let filter = SCContentFilter(desktopIndependentWindow: capturedWindow)
+        let image = try await captureImage(filter: filter, configuration: configuration)
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        guard let png = bitmap.representation(using: .png, properties: [:]) else {
+            throw ProbeError.captureFailed
+        }
+        return png
+    }
+
+    @available(macOS 14.4, *)
+    private static func currentProcessShareableContent() async throws -> SCShareableContent {
+        try await withCheckedThrowingContinuation { continuation in
+            SCShareableContent.getCurrentProcessShareableContent { content, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let content {
+                    continuation.resume(returning: content)
+                } else {
+                    continuation.resume(
+                        throwing: ProbeError.exactCaptureUnavailable(
+                            "ScreenCaptureKit returned no current-process content"
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    @available(macOS 14.4, *)
+    private static func captureImage(
+        filter: SCContentFilter,
+        configuration: SCStreamConfiguration
+    ) async throws -> CGImage {
+        try await withCheckedThrowingContinuation { continuation in
+            SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: configuration
+            ) { image, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let image {
+                    continuation.resume(returning: image)
+                } else {
+                    continuation.resume(
+                        throwing: ProbeError.exactCaptureUnavailable(
+                            "ScreenCaptureKit returned no window image"
+                        )
+                    )
+                }
+            }
+        }
     }
 
     private static func hybridWindowFramePNG(
@@ -256,6 +367,7 @@ enum ViewSnapshotter {
 enum ProbeError: LocalizedError {
     case noVisibleWindow
     case captureFailed
+    case exactCaptureUnavailable(String)
     case socket(String)
     case invalidRequest
     case unauthorized
@@ -264,6 +376,7 @@ enum ProbeError: LocalizedError {
         switch self {
         case .noVisibleWindow: "No visible AppKit window is available"
         case .captureFailed: "Unable to capture the AppKit window"
+        case let .exactCaptureUnavailable(message): message
         case let .socket(message): message
         case .invalidRequest: "Invalid probe request"
         case .unauthorized: "Probe request token is invalid"

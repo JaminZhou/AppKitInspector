@@ -1,5 +1,6 @@
 import { App } from "@modelcontextprotocol/ext-apps";
 import {
+  type CaptureMode,
   type CaptureScope,
   LocalInspectorClient,
   standaloneConnection,
@@ -12,6 +13,13 @@ import {
   scaledZoom,
   steppedZoom,
 } from "./viewport.js";
+import { targetRefreshDecision } from "./target-monitor.js";
+import {
+  nativeCommentTargetID,
+  nativeCommentTargetLabel,
+  nativeCommentTargets,
+  type NativeCommentTarget,
+} from "./native-comment-targets.js";
 
 type Rect = { x: number; y: number; width: number; height: number };
 type Node = {
@@ -29,7 +37,9 @@ type Snapshot = {
     frame: Rect;
     contentFrame?: Rect;
     captureScope?: CaptureScope;
-    captureRendering?: "viewCache" | "windowFrameHybrid";
+    requestedCaptureMode?: CaptureMode;
+    captureRendering?: "viewCache" | "windowFrameHybrid" | "windowServerExact";
+    captureFallbackReason?: string;
   };
   imageDataURL: string;
   root: Node;
@@ -47,7 +57,6 @@ type LaunchState = {
 type FullscreenLaunch = LaunchState & {
   launchID: string;
 };
-type ReviewArtifacts = { imagePath?: string; contextPath?: string };
 
 const isLocalSurface = window.location.protocol === "http:" && window.location.hostname === "127.0.0.1";
 const connection = standaloneConnection(window.location);
@@ -66,7 +75,6 @@ const bridge = isLocalSurface
 let state: State | undefined;
 let selectedNode: Node | undefined;
 let selectedPath: string[] | undefined;
-let note = "";
 let toast = isLocalSurface ? "Loading the connected app…" : "Connecting to Codex…";
 let bridgeConnected = false;
 let launchState: LaunchState | undefined;
@@ -78,6 +86,8 @@ let manualZoom = 1;
 let fittedZoom = 1;
 let zoomObserver: ResizeObserver | undefined;
 let captureScope: CaptureScope = "windowFrame";
+let captureMode: CaptureMode = "hybrid";
+const TARGET_POLL_INTERVAL_MS = 1_500;
 
 function isState(value: unknown): value is State {
   if (!value || typeof value !== "object") return false;
@@ -145,6 +155,30 @@ function highlightStyle(node: Node, snapshot: Snapshot): string {
   return `left:${left}%;top:${top}%;width:${width}%;height:${height}%`;
 }
 
+function selectView(node: Node, path: string[]): void {
+  selectedNode = node;
+  selectedPath = path;
+}
+
+function selectionHighlight(snapshot: Snapshot): string {
+  return selectedNode
+    ? `<div class="highlight" style="${highlightStyle(selectedNode, snapshot)}"></div>`
+    : "";
+}
+
+function nativeCommentTargetStyle(target: NativeCommentTarget, snapshot: Snapshot): string {
+  return `${highlightStyle(target.node, snapshot)};z-index:${10 + target.depth}`;
+}
+
+function nativeCommentTargetOverlays(snapshot: Snapshot): string {
+  return nativeCommentTargets(snapshot.root, snapshot.window.frame)
+    .map((target) => {
+      const label = nativeCommentTargetLabel(target);
+      return `<button type="button" id="${nativeCommentTargetID(target.node.id)}" class="native-comment-target" data-view-id="${escapeHTML(target.node.id)}" data-appkit-class="${escapeHTML(target.node.className)}" data-appkit-hierarchy="${escapeHTML(target.path.join(" › "))}" aria-label="${escapeHTML(label)}" title="${escapeHTML(label)}" style="${nativeCommentTargetStyle(target, snapshot)}"></button>`;
+    })
+    .join("");
+}
+
 function targetLabel(): string {
   const target = state?.snapshot.target ?? launchState?.target;
   if (target) return `${target.name} · pid ${target.pid}`;
@@ -154,6 +188,26 @@ function targetLabel(): string {
 
 function snapshotCaptureScope(snapshot: Snapshot): CaptureScope {
   return snapshot.window.captureScope ?? "content";
+}
+
+function snapshotCaptureMode(snapshot: Snapshot): CaptureMode {
+  return snapshot.window.requestedCaptureMode ?? "hybrid";
+}
+
+function captureBadge(snapshot: Snapshot): string {
+  const rendering = snapshot.window.captureRendering;
+  if (rendering === "windowServerExact") {
+    return '<span class="capture-note exact" title="Captured from this Debug app’s own WindowServer window through public ScreenCaptureKit APIs.">Exact Window</span>';
+  }
+  if (rendering === "windowFrameHybrid") {
+    const fallback = snapshot.window.captureFallbackReason;
+    const label = fallback ? "Hybrid fallback" : "Hybrid AppKit";
+    const title = fallback
+      ? `Exact Window was unavailable: ${fallback}`
+      : "System toolbar materials are reconstructed with public AppKit drawing.";
+    return `<span class="capture-note${fallback ? " warning" : ""}" title="${escapeHTML(title)}">${label}</span>`;
+  }
+  return '<span class="capture-note" title="Captured from the application content view.">View Cache</span>';
 }
 
 function effectiveZoom(): number {
@@ -240,16 +294,12 @@ function renderLauncher(root: HTMLDivElement): void {
       <section class="launcher" aria-label="Open AppKit Inspector">
         <div><strong>Experimental Full Screen</strong><span>${escapeHTML(toast)}</span></div>
         <div class="launcher-actions">
-          <button type="button" id="open-window" class="secondary-action" ${disabled ? "disabled" : ""}>Open External Window</button>
           <button type="button" id="open-inspector" class="primary-action" ${disabled ? "disabled" : ""}>${opening ? "Opening…" : "Try Full Screen"}</button>
         </div>
       </section>
     </main>`;
   root.querySelector<HTMLButtonElement>("#open-inspector")?.addEventListener("click", () => {
     void openInspector();
-  });
-  root.querySelector<HTMLButtonElement>("#open-window")?.addEventListener("click", () => {
-    void openInspectorWindow();
   });
 }
 
@@ -266,8 +316,7 @@ function renderWorkspace(root: HTMLDivElement): void {
   }
   const snapshot = state.snapshot;
   const actualScope = snapshotCaptureScope(snapshot);
-  const hybridFrame = actualScope === "windowFrame" &&
-    snapshot.window.captureRendering === "windowFrameHybrid";
+  const actualMode = snapshotCaptureMode(snapshot);
   const node = selectedNode ?? state.selected?.node;
   const treeRows = rows(snapshot.root)
     .map(
@@ -282,13 +331,16 @@ function renderWorkspace(root: HTMLDivElement): void {
         <strong>AppKit Inspector</strong>
         <span class="status">${escapeHTML(state.isMock ? "Mock target" : `${snapshot.target.name} · pid ${snapshot.target.pid}`)}</span>
         <span class="spacer"></span>
-        ${!isLocalSurface ? '<button type="button" id="open-window">Open Window</button>' : ""}
         ${!isLocalSurface ? '<button type="button" id="close-fullscreen">Close</button>' : ""}
         <div class="scope-controls" role="group" aria-label="Snapshot area">
           <button type="button" data-capture-scope="windowFrame" aria-pressed="${actualScope === "windowFrame"}" title="Include title bar and window controls">Window</button>
           <button type="button" data-capture-scope="content" aria-pressed="${actualScope === "content"}" title="Show only the application content view">Content</button>
         </div>
-        ${hybridFrame ? '<span class="capture-note" title="System toolbar materials are reconstructed with public AppKit drawing so controls stay readable without Screen Recording.">Hybrid AppKit</span>' : ""}
+        ${actualScope === "windowFrame" ? `<div class="capture-mode-controls" role="group" aria-label="Window rendering">
+          <button type="button" data-capture-mode="hybrid" aria-pressed="${actualMode === "hybrid"}" title="Permission-free AppKit reconstruction">Hybrid</button>
+          <button type="button" data-capture-mode="exact" aria-pressed="${actualMode === "exact"}" title="Exact current-process WindowServer pixels">Exact</button>
+        </div>` : ""}
+        ${captureBadge(snapshot)}
         <div class="zoom-controls" role="group" aria-label="Snapshot zoom">
           <button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom Out">−</button>
           <button type="button" id="zoom-fit" aria-label="Fit snapshot" aria-pressed="true" title="Fit Snapshot">Fit</button>
@@ -302,27 +354,20 @@ function renderWorkspace(root: HTMLDivElement): void {
           <div class="canvas">
             <div class="screen">
               <img src="${snapshot.imageDataURL}" alt="${escapeHTML(snapshot.window.title)} app snapshot" draggable="false" />
-              ${node ? `<div class="highlight" style="${highlightStyle(node, snapshot)}"></div>` : ""}
               <button type="button" class="hit-surface" aria-label="Select a view in the application snapshot"></button>
+              ${nativeCommentTargetOverlays(snapshot)}
+              ${selectionHighlight(snapshot)}
             </div>
           </div>
         </div>
         <aside class="inspector">
           <div class="summary"><h2>${escapeHTML(node?.className ?? "No Selection")}</h2><p>${escapeHTML(path)}</p>${node ? `<p>x ${Math.round(node.frame.x)} · y ${Math.round(node.frame.y)} · ${Math.round(node.frame.width)} × ${Math.round(node.frame.height)}</p>` : ""}</div>
           <div class="tree" role="tree" aria-label="AppKit view hierarchy">${treeRows}</div>
-          <div class="review">
-            <textarea id="note" aria-label="Feedback for Codex" placeholder="Describe what should change…">${escapeHTML(note)}</textarea>
-            <button type="button" id="send" class="send" ${node && note.trim() ? "" : "disabled"}>Copy for Codex</button>
-            <span class="toast" aria-live="polite">${escapeHTML(toast)}</span>
-          </div>
         </aside>
       </section>
     </main>`;
 
   root.querySelector<HTMLButtonElement>("#refresh")?.addEventListener("click", () => void refresh());
-  root.querySelector<HTMLButtonElement>("#open-window")?.addEventListener("click", () => {
-    void openInspectorWindow();
-  });
   root.querySelector<HTMLButtonElement>("#close-fullscreen")?.addEventListener("click", () => {
     void closeFullscreen();
   });
@@ -330,6 +375,12 @@ function renderWorkspace(root: HTMLDivElement): void {
     button.addEventListener("click", () => {
       const scope = button.dataset.captureScope;
       if (scope === "content" || scope === "windowFrame") void switchCaptureScope(scope);
+    });
+  });
+  root.querySelectorAll<HTMLButtonElement>("[data-capture-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const mode = button.dataset.captureMode;
+      if (mode === "hybrid" || mode === "exact") void switchCaptureMode(mode);
     });
   });
   installZoomControls(root, snapshot);
@@ -343,17 +394,10 @@ function renderWorkspace(root: HTMLDivElement): void {
   root.querySelectorAll<HTMLButtonElement>("[data-view-id]").forEach((button) => {
     button.addEventListener("click", () => {
       const selected = rows(snapshot.root).find(({ node: item }) => item.id === button.dataset.viewId);
-      selectedNode = selected?.node;
-      selectedPath = selected?.path;
+      if (selected) selectView(selected.node, selected.path);
       render();
     });
   });
-  root.querySelector<HTMLTextAreaElement>("#note")?.addEventListener("input", (event) => {
-    note = (event.currentTarget as HTMLTextAreaElement).value;
-    const send = root.querySelector<HTMLButtonElement>("#send");
-    if (send) send.disabled = !(selectedNode ?? state?.selected?.node) || !note.trim();
-  });
-  root.querySelector<HTMLButtonElement>("#send")?.addEventListener("click", () => void copyForCodex());
 }
 
 function render(): void {
@@ -392,26 +436,6 @@ async function callInspectorTool(name: string, arguments_: Record<string, unknow
   return result.structuredContent;
 }
 
-async function openSeparateWindow(): Promise<void> {
-  await callInspectorTool("open_appkit_inspector_window");
-  toast = "Inspector opened in a separate local window.";
-}
-
-async function openInspectorWindow(): Promise<void> {
-  if (!bridge || !bridgeConnected || opening) return;
-  opening = true;
-  toast = "Opening a separate Inspector window…";
-  render();
-  try {
-    await openSeparateWindow();
-  } catch (error) {
-    toast = errorMessage(error);
-  } finally {
-    opening = false;
-  }
-  render();
-}
-
 async function waitForUsableFullscreen(): Promise<boolean> {
   for (let attempt = 0; attempt < 12; attempt += 1) {
     await delay(100);
@@ -435,7 +459,7 @@ async function openInspector(): Promise<void> {
   if (!bridge || !bridgeConnected || opening) return;
   const availableModes = bridge.getHostContext()?.availableDisplayModes ?? [];
   if (!availableModes.includes("fullscreen")) {
-    toast = "This Codex host does not offer Full Screen. Use the default Browser command or explicitly open the external window.";
+    toast = "This Codex host does not offer Full Screen. Use the supported Codex Browser command.";
     render();
     return;
   }
@@ -473,7 +497,7 @@ async function openInspector(): Promise<void> {
   } catch (error) {
     fullscreenActive = false;
     state = undefined;
-    toast = `${errorMessage(error)}. No external window was opened; return to the default Codex Browser path.`;
+    toast = `${errorMessage(error)}. Return to the supported Codex Browser path.`;
   } finally {
     opening = false;
   }
@@ -494,25 +518,18 @@ async function closeFullscreen(): Promise<void> {
 }
 
 async function snapshotRequest(): Promise<unknown> {
-  if (localClient) return await localClient.snapshot<State>(captureScope);
-  return await callInspectorTool("appkit_snapshot", { scope: captureScope });
+  if (localClient) return await localClient.snapshot<State>(captureScope, captureMode);
+  return await callInspectorTool("appkit_snapshot", { scope: captureScope, mode: captureMode });
 }
 
 async function inspectRequest(x: number, y: number): Promise<unknown> {
-  if (localClient) return await localClient.inspect<State>(x, y, captureScope);
-  return await callInspectorTool("appkit_inspect_point", { x, y, scope: captureScope });
-}
-
-async function saveReviewRequest(selectedViewID: string, reviewNote: string): Promise<ReviewArtifacts> {
-  if (localClient) {
-    return await localClient.saveReview<ReviewArtifacts>(selectedViewID, reviewNote, captureScope);
-  }
-  const output = await callInspectorTool("save_appkit_review", {
-    selectedViewID,
-    note: reviewNote,
+  if (localClient) return await localClient.inspect<State>(x, y, captureScope, captureMode);
+  return await callInspectorTool("appkit_inspect_point", {
+    x,
+    y,
     scope: captureScope,
+    mode: captureMode,
   });
-  return (output ?? {}) as ReviewArtifacts;
 }
 
 async function refresh(): Promise<boolean> {
@@ -526,10 +543,13 @@ async function refresh(): Promise<boolean> {
     if (!isState(nextState)) throw new Error("Inspector returned an invalid snapshot");
     state = nextState;
     captureScope = snapshotCaptureScope(nextState.snapshot);
+    captureMode = snapshotCaptureMode(nextState.snapshot);
     selectedNode = undefined;
     selectedPath = undefined;
     toast = requestedScope !== captureScope
       ? "Window Frame requires a rebuilt Debug target; showing Content instead"
+      : nextState.snapshot.window.captureFallbackReason
+        ? `Exact Window unavailable; using Hybrid: ${nextState.snapshot.window.captureFallbackReason}`
       : nextState.isMock
         ? "Explore the mock UI or connect a Debug target"
         : `${captureScope === "windowFrame" ? "Window Frame" : "Content"} snapshot refreshed`;
@@ -540,6 +560,31 @@ async function refresh(): Promise<boolean> {
   } finally {
     loading = false;
     render();
+  }
+}
+
+async function refreshAfterTargetChange(): Promise<void> {
+  if (!localClient || loading || document.visibilityState === "hidden") return;
+  try {
+    const targetState = await localClient.target<LaunchState>();
+    const displayedPID = state && !state.isMock ? state.snapshot.target.pid : undefined;
+    const nextPID = targetState.target?.pid;
+    const decision = targetRefreshDecision(displayedPID, targetState);
+    if (decision === "refresh" && nextPID !== undefined) {
+      toast = displayedPID === undefined
+        ? "Connected to the relaunched Debug target…"
+        : `Debug target restarted as pid ${nextPID}; refreshing…`;
+      render();
+      await refresh();
+    } else if (decision === "waiting") {
+      const waitingMessage = "Debug target stopped; waiting for it to relaunch…";
+      if (toast !== waitingMessage) {
+        toast = waitingMessage;
+        render();
+      }
+    }
+  } catch {
+    // The authenticated Inspector session may be closing. Manual Refresh remains available.
   }
 }
 
@@ -554,6 +599,17 @@ async function switchCaptureScope(scope: CaptureScope): Promise<void> {
   await refresh();
 }
 
+async function switchCaptureMode(mode: CaptureMode): Promise<void> {
+  if (loading || mode === captureMode) return;
+  captureMode = mode;
+  state = undefined;
+  selectedNode = undefined;
+  selectedPath = undefined;
+  toast = mode === "exact" ? "Loading Exact Window…" : "Loading Hybrid AppKit…";
+  render();
+  await refresh();
+}
+
 async function inspect(x: number, y: number): Promise<void> {
   if (!localClient && !fullscreenActive) return;
   toast = "Inspecting point…";
@@ -563,54 +619,10 @@ async function inspect(x: number, y: number): Promise<void> {
     if (!isState(nextState)) throw new Error("Inspector returned an invalid selection");
     state = nextState;
     captureScope = snapshotCaptureScope(nextState.snapshot);
+    captureMode = snapshotCaptureMode(nextState.snapshot);
     selectedNode = nextState.selected?.node;
     selectedPath = nextState.selected?.ancestorPath;
     toast = selectedNode ? `Selected ${selectedNode.className}` : "No view at that point";
-  } catch (error) {
-    toast = errorMessage(error);
-  }
-  render();
-}
-
-async function copyText(value: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(value);
-    return true;
-  } catch {
-    const textarea = document.createElement("textarea");
-    textarea.value = value;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.append(textarea);
-    textarea.select();
-    const copied = document.execCommand("copy");
-    textarea.remove();
-    return copied;
-  }
-}
-
-async function copyForCodex(): Promise<void> {
-  const node = selectedNode ?? state?.selected?.node;
-  if (!state || !node || !note.trim()) return;
-  toast = "Preparing review…";
-  render();
-  try {
-    const output = await saveReviewRequest(node.id, note.trim());
-    const path = selectedPath?.join(" › ") ?? node.className;
-    const message = [
-      `Please update the selected AppKit view based on this feedback: ${note.trim()}`,
-      `View: ${node.className}`,
-      `Hierarchy: ${path}`,
-      `Frame: x=${node.frame.x}, y=${node.frame.y}, width=${node.frame.width}, height=${node.frame.height}`,
-      `Capture: ${captureScope === "windowFrame" ? "Window Frame" : "Content"}`,
-      output.imagePath ? `Snapshot: ${output.imagePath}` : undefined,
-      output.contextPath ? `Review context: ${output.contextPath}` : undefined,
-    ]
-      .filter(Boolean)
-      .join("\n");
-    if (!(await copyText(message))) throw new Error("Could not copy the review to the clipboard");
-    toast = "Review copied. Paste it into Codex.";
   } catch (error) {
     toast = errorMessage(error);
   }
@@ -638,12 +650,17 @@ if (bridge) {
 render();
 if (localClient) {
   void refresh();
+  window.setInterval(() => void refreshAfterTargetChange(), TARGET_POLL_INTERVAL_MS);
+  window.addEventListener("focus", () => void refreshAfterTargetChange());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void refreshAfterTargetChange();
+  });
 } else if (bridge) {
   bridge
     .connect()
     .then(() => {
       bridgeConnected = true;
-      toast = "Nothing opens automatically. Try Full Screen or explicitly open the external window.";
+      toast = "Use the supported Codex Browser command. Full Screen remains experimental.";
       render();
     })
     .catch((error) => {

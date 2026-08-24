@@ -3,9 +3,10 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFile } from "node:child_process";
 import {
+  captureModeSchema,
   captureScopeSchema,
+  type CaptureMode,
   type CaptureScope,
   type InspectResult,
   type Snapshot,
@@ -24,9 +25,13 @@ export type InspectorWindowState = {
   selected?: InspectResult;
 };
 
-export type ReviewArtifacts = {
-  imagePath: string;
-  contextPath: string;
+export type InspectorTargetState = {
+  connected: boolean;
+  target?: {
+    name: string;
+    pid: number;
+    bundleIdentifier: string;
+  };
 };
 
 export type BrowserLaunch = {
@@ -35,30 +40,15 @@ export type BrowserLaunch = {
 };
 
 export type InspectorWindowBackend = {
-  preview(scope?: CaptureScope): Promise<InspectorWindowState>;
-  inspect(x: number, y: number, scope?: CaptureScope): Promise<InspectorWindowState>;
-  saveReview(
-    selectedViewID: string | undefined,
-    note: string,
-    scope?: CaptureScope,
-  ): Promise<ReviewArtifacts>;
+  targetState(): Promise<InspectorTargetState>;
+  preview(scope?: CaptureScope, mode?: CaptureMode): Promise<InspectorWindowState>;
+  inspect(x: number, y: number, scope?: CaptureScope, mode?: CaptureMode): Promise<InspectorWindowState>;
 };
 
 type Assets = { template: string; script: string };
 type Options = {
   loadAssets?: () => Promise<Assets>;
-  openURL?: (url: string) => Promise<void>;
 };
-
-function defaultOpenURL(url: string): Promise<void> {
-  if (process.env.APPKIT_INSPECTOR_NO_OPEN === "1") return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    execFile("/usr/bin/open", ["-n", url], (error) => {
-      if (error) reject(error);
-      else resolve();
-    });
-  });
-}
 
 async function defaultLoadAssets(): Promise<Assets> {
   const directory = fileURLToPath(new URL(".", import.meta.url));
@@ -100,6 +90,10 @@ function captureScope(value: unknown): CaptureScope {
   return captureScopeSchema.catch("windowFrame").parse(value);
 }
 
+function captureMode(value: unknown): CaptureMode {
+  return captureModeSchema.catch("hybrid").parse(value);
+}
+
 async function readJSON(request: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let length = 0;
@@ -119,7 +113,6 @@ async function readJSON(request: IncomingMessage): Promise<Record<string, unknow
 export class InspectorWindowServer {
   private readonly token = randomBytes(32).toString("base64url");
   private readonly loadAssets: () => Promise<Assets>;
-  private readonly openURL: (url: string) => Promise<void>;
   private server: Server | undefined;
   private origin: string | undefined;
   private startPromise: Promise<string> | undefined;
@@ -131,7 +124,6 @@ export class InspectorWindowServer {
     options: Options = {},
   ) {
     this.loadAssets = options.loadAssets ?? defaultLoadAssets;
-    this.openURL = options.openURL ?? defaultOpenURL;
   }
 
   async start(): Promise<string> {
@@ -143,10 +135,6 @@ export class InspectorWindowServer {
     } finally {
       this.startPromise = undefined;
     }
-  }
-
-  async open(): Promise<void> {
-    await this.openURL(await this.start());
   }
 
   async createBrowserLaunch(): Promise<BrowserLaunch> {
@@ -255,8 +243,19 @@ export class InspectorWindowServer {
       sendJSON(response, 403, { error: "Inspector origin check failed" });
       return;
     }
+    if (request.method === "GET" && url.pathname === "/api/target") {
+      sendJSON(response, 200, await this.backend.targetState());
+      return;
+    }
     if (request.method === "GET" && url.pathname === "/api/snapshot") {
-      sendJSON(response, 200, await this.backend.preview(captureScope(url.searchParams.get("scope"))));
+      sendJSON(
+        response,
+        200,
+        await this.backend.preview(
+          captureScope(url.searchParams.get("scope")),
+          captureMode(url.searchParams.get("mode")),
+        ),
+      );
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/inspect") {
@@ -267,21 +266,10 @@ export class InspectorWindowServer {
         sendJSON(response, 400, { error: "Inspect coordinates must be between 0 and 1" });
         return;
       }
-      sendJSON(response, 200, await this.backend.inspect(x, y, captureScope(body.scope)));
-      return;
-    }
-    if (request.method === "POST" && url.pathname === "/api/review") {
-      const body = await readJSON(request);
-      const selectedViewID = body.selectedViewID;
-      const note = body.note;
-      if (typeof selectedViewID !== "string" || typeof note !== "string" || note.length > 8_000) {
-        sendJSON(response, 400, { error: "Review requires a view id and note up to 8,000 characters" });
-        return;
-      }
       sendJSON(
         response,
         200,
-        await this.backend.saveReview(selectedViewID, note, captureScope(body.scope)),
+        await this.backend.inspect(x, y, captureScope(body.scope), captureMode(body.mode)),
       );
       return;
     }

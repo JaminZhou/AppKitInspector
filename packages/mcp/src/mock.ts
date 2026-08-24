@@ -1,4 +1,4 @@
-import type { CaptureScope, InspectResult, Snapshot, ViewNode } from "./contracts.js";
+import type { CaptureMode, CaptureScope, InspectResult, Snapshot, ViewNode } from "./contracts.js";
 
 const view = (
   id: string,
@@ -60,10 +60,13 @@ function mockImageDataURL(scope: CaptureScope): string {
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
-export function mockSnapshot(scope: CaptureScope = "windowFrame"): Snapshot {
+export function mockSnapshot(
+  scope: CaptureScope = "windowFrame",
+  mode: CaptureMode = "hybrid",
+): Snapshot {
   const contentOnly = scope === "content";
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     target: {
       pid: 1,
       name: "AppKit Inspector Demo",
@@ -77,7 +80,11 @@ export function mockSnapshot(scope: CaptureScope = "windowFrame"): Snapshot {
       frame: { x: 0, y: 0, width: 960, height: contentOnly ? 552 : 600 },
       contentFrame: { x: 0, y: 0, width: 960, height: 552 },
       captureScope: scope,
+      requestedCaptureMode: mode,
       captureRendering: contentOnly ? "viewCache" : "windowFrameHybrid",
+      ...(mode === "exact" && !contentOnly
+        ? { captureFallbackReason: "Exact Window is unavailable for the built-in mock target" }
+        : {}),
     },
     imageDataURL: mockImageDataURL(scope),
     root: contentOnly ? contentRoot : root,
@@ -88,8 +95,9 @@ export function inspectMockPoint(
   x: number,
   y: number,
   scope: CaptureScope = "windowFrame",
+  mode: CaptureMode = "hybrid",
 ): InspectResult {
-  const snapshot = mockSnapshot(scope);
+  const snapshot = mockSnapshot(scope, mode);
   const pointX = x * snapshot.window.frame.width;
   const pointY = (1 - y) * snapshot.window.frame.height;
 

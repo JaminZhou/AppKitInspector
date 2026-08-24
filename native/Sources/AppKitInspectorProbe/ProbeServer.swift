@@ -37,6 +37,7 @@ private struct ProbeRequest: Decodable {
     let x: Double?
     let y: Double?
     let scope: ProbeCaptureScope?
+    let mode: ProbeCaptureMode?
 }
 
 private struct SuccessResponse<Value: Encodable>: Encodable {
@@ -51,6 +52,11 @@ private struct FailureResponse: Encodable {
 
 private final class ProbeServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "dev.appkit-inspector.probe", qos: .userInitiated)
+    private let responseQueue = DispatchQueue(
+        label: "dev.appkit-inspector.probe.responses",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
     private let token = "\(UUID().uuidString)\(UUID().uuidString)"
     private let startedAt = ISO8601DateFormatter().string(from: Date())
     private var socketDescriptor: Int32 = -1
@@ -141,7 +147,6 @@ private final class ProbeServer: @unchecked Sendable {
                 continue
             }
             handle(client)
-            Darwin.close(client)
         }
     }
 
@@ -150,41 +155,58 @@ private final class ProbeServer: @unchecked Sendable {
             let request = try decodeRequest(client)
             guard request.token == token else { throw ProbeError.unauthorized }
             guard let target else { throw ProbeError.invalidRequest }
-            let response: Data = try DispatchQueue.main.sync {
-                try MainActor.assumeIsolated {
+            Task { @MainActor [weak self] in
+                guard let self else {
+                    Darwin.close(client)
+                    return
+                }
+                let response: Data
+                do {
                     switch request.method {
                     case "snapshot":
-                        return try JSONEncoder().encode(
+                        response = try JSONEncoder().encode(
                             SuccessResponse(
-                                result: ViewSnapshotter.snapshot(
+                                result: try await ViewSnapshotter.snapshot(
                                     target: target,
-                                    scope: request.scope ?? .windowFrame
+                                    scope: request.scope ?? .windowFrame,
+                                    mode: request.mode ?? .hybrid
                                 )
                             )
                         )
                     case "inspectPoint":
                         guard let x = request.x, let y = request.y else { throw ProbeError.invalidRequest }
-                        return try JSONEncoder().encode(
+                        response = try JSONEncoder().encode(
                             SuccessResponse(
-                                result: ViewSnapshotter.inspectPoint(
+                                result: try await ViewSnapshotter.inspectPoint(
                                     x: x,
                                     y: y,
                                     target: target,
-                                    scope: request.scope ?? .windowFrame
+                                    scope: request.scope ?? .windowFrame,
+                                    mode: request.mode ?? .hybrid
                                 )
                             )
                         )
                     default:
                         throw ProbeError.invalidRequest
                     }
+                } catch {
+                    response = self.failureResponse(for: error)
+                }
+                self.responseQueue.async { [weak self] in
+                    self?.write(response + Data([0x0A]), to: client)
+                    Darwin.close(client)
                 }
             }
-            write(response + Data([0x0A]), to: client)
         } catch {
-            let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            let response = (try? JSONEncoder().encode(FailureResponse(error: message))) ?? Data()
+            let response = failureResponse(for: error)
             write(response + Data([0x0A]), to: client)
+            Darwin.close(client)
         }
+    }
+
+    private func failureResponse(for error: Error) -> Data {
+        let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        return (try? JSONEncoder().encode(FailureResponse(error: message))) ?? Data()
     }
 
     private func decodeRequest(_ client: Int32) throws -> ProbeRequest {

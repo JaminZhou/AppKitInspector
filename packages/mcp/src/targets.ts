@@ -8,6 +8,7 @@ import {
   snapshotSchema,
   targetSchema,
   type InspectResult,
+  type CaptureMode,
   type CaptureScope,
   type PublicTarget,
   type Snapshot,
@@ -55,8 +56,9 @@ export function publicTarget(target: Target): PublicTarget {
 export async function requestSnapshot(
   target: Target,
   scope: CaptureScope = "windowFrame",
+  mode: CaptureMode = "hybrid",
 ): Promise<Snapshot> {
-  return snapshotSchema.parse(await request(target, { method: "snapshot", scope }));
+  return snapshotSchema.parse(await request(target, { method: "snapshot", scope, mode }));
 }
 
 export async function requestInspectPoint(
@@ -64,8 +66,11 @@ export async function requestInspectPoint(
   x: number,
   y: number,
   scope: CaptureScope = "windowFrame",
+  mode: CaptureMode = "hybrid",
 ): Promise<InspectResult> {
-  return inspectResultSchema.parse(await request(target, { method: "inspectPoint", x, y, scope }));
+  return inspectResultSchema.parse(
+    await request(target, { method: "inspectPoint", x, y, scope, mode }),
+  );
 }
 
 async function request(target: Target, payload: Record<string, unknown>): Promise<unknown> {

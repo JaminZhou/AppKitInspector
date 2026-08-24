@@ -47,11 +47,22 @@ try {
   if (state.snapshot?.window?.captureScope !== "windowFrame") {
     throw new Error("Live target did not return the Window Frame capture scope");
   }
-  if (state.snapshot?.schemaVersion !== 3) {
+  if (state.snapshot?.schemaVersion !== 4) {
     throw new Error("Live target did not return the Window Frame schema version");
   }
   if (state.snapshot?.window?.captureRendering !== "windowFrameHybrid") {
     throw new Error("Live target did not return the hybrid AppKit Window Frame rendering");
+  }
+  const exact = await client.callTool({
+    name: "appkit_snapshot",
+    arguments: { scope: "windowFrame", mode: "exact" },
+  });
+  if (exact.structuredContent?.snapshot?.window?.requestedCaptureMode !== "exact") {
+    throw new Error("Live target did not preserve the Exact Window request");
+  }
+  if (exact.structuredContent?.snapshot?.window?.captureRendering !== "windowServerExact") {
+    const reason = exact.structuredContent?.snapshot?.window?.captureFallbackReason ?? "no reason";
+    throw new Error(`Live target did not return Exact Window rendering (${reason})`);
   }
   const views = [];
   const collect = (node) => {
@@ -84,8 +95,37 @@ try {
   if (content.structuredContent?.snapshot?.window?.captureRendering !== "viewCache") {
     throw new Error("Content capture did not use the AppKit view cache");
   }
+  const launchResponse = await fetch(opened.structuredContent.browserURL, {
+    redirect: "manual",
+  });
+  const setCookie = launchResponse.headers.get("set-cookie");
+  if (launchResponse.status !== 303 || !setCookie) {
+    throw new Error("Browser launch did not establish an authenticated Inspector session");
+  }
+  const browserOrigin = new URL(opened.structuredContent.browserURL).origin;
+  const browserCookie = setCookie.split(";", 1)[0];
+  const browserSnapshot = await fetch(new URL("/api/snapshot?scope=windowFrame&mode=hybrid", browserOrigin), {
+    headers: { Cookie: browserCookie },
+  });
+  if (!browserSnapshot.ok) {
+    throw new Error(`Authenticated Browser snapshot failed with HTTP ${browserSnapshot.status}`);
+  }
+  const browserState = await browserSnapshot.json();
+  if (browserState.snapshot?.target?.pid !== target.pid) {
+    throw new Error("Authenticated Browser session did not preserve the connected target");
+  }
+  const browserScript = await fetch(new URL("/app.js", browserOrigin));
+  const browserScriptText = await browserScript.text();
+  if (!browserScript.ok || !browserScriptText.includes("native-comment-target")) {
+    throw new Error("Browser app does not expose semantic Codex comment targets");
+  }
+  for (const retired of ["wait_for_appkit_review", "save_appkit_review_batch", "open_appkit_inspector_window"]) {
+    if (browserScriptText.includes(retired)) {
+      throw new Error(`Browser app still contains retired fallback path: ${retired}`);
+    }
+  }
   process.stdout.write(
-    `Connected to ${target.name} (${target.pid}); selected Close Window and verified Content mode.\n`,
+    `Connected to ${target.name} (${target.pid}); verified Hybrid, Exact Window, Close Window selection, Content mode, and Codex Browser semantic comment targets.\n`,
   );
   if (process.env.APPKIT_INSPECTOR_PREPARE_BROWSER === "1") {
     const browser = await client.callTool({

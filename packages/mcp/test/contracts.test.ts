@@ -5,8 +5,9 @@ import { inspectMockPoint, mockSnapshot } from "../src/mock.js";
 
 test("mock snapshot satisfies the transport contract", () => {
   const snapshot = snapshotSchema.parse(mockSnapshot());
-  assert.equal(snapshot.schemaVersion, 3);
+  assert.equal(snapshot.schemaVersion, 4);
   assert.equal(snapshot.window.captureScope, "windowFrame");
+  assert.equal(snapshot.window.requestedCaptureMode, "hybrid");
   assert.equal(snapshot.window.captureRendering, "windowFrameHybrid");
   assert.ok(flattenViews(snapshot.root).some((view) => view.label === "Close Window"));
   assert.match(snapshot.imageDataURL, /^data:image\/svg\+xml;base64,/);
@@ -15,6 +16,11 @@ test("mock snapshot satisfies the transport contract", () => {
   assert.equal(content.window.captureScope, "content");
   assert.equal(content.window.captureRendering, "viewCache");
   assert.equal(flattenViews(content.root).some((view) => view.label === "Close Window"), false);
+
+  const exactFallback = snapshotSchema.parse(mockSnapshot("windowFrame", "exact"));
+  assert.equal(exactFallback.window.requestedCaptureMode, "exact");
+  assert.equal(exactFallback.window.captureRendering, "windowFrameHybrid");
+  assert.match(exactFallback.window.captureFallbackReason ?? "", /mock target/);
 });
 
 test("mock point inspection returns a concrete view and ancestor path", () => {
