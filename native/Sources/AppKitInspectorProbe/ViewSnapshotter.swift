@@ -101,7 +101,11 @@ enum ViewSnapshotter {
             let (index, column) = element
             guard !column.isHidden else { return nil }
             let localFrame = headerView.headerRect(ofColumn: index)
-            guard localFrame.width >= 2, localFrame.height >= 2 else { return nil }
+                .intersection(headerView.visibleRect)
+            guard !localFrame.isNull,
+                  localFrame.width >= 2,
+                  localFrame.height >= 2
+            else { return nil }
             let frame = headerView.convert(localFrame, to: rootView)
             let identifier = column.identifier.rawValue
             return ProbeViewNode(

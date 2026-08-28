@@ -59,6 +59,10 @@ final class ProbeModelsTests: XCTestCase {
 
         let headerView = NSTableHeaderView(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
         tableView.headerView = headerView
+        let clipView = NSClipView(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        clipView.documentView = headerView
+        clipView.scroll(to: .zero)
+        let unclippedEventsRect = headerView.headerRect(ofColumn: 1)
         let semanticHeaders = ViewSnapshotter.tableHeaderCellNodes(
             headerView,
             relativeTo: headerView
@@ -68,11 +72,12 @@ final class ProbeModelsTests: XCTestCase {
         XCTAssertEqual(semanticHeaders.map(\.identifier), ["name", "events"])
         XCTAssertEqual(semanticHeaders.map(\.role), ["AXColumnHeader", "AXColumnHeader"])
         let nameRect = headerView.headerRect(ofColumn: 0)
-        let eventsRect = headerView.headerRect(ofColumn: 1)
+        let eventsRect = headerView.headerRect(ofColumn: 1).intersection(headerView.visibleRect)
         XCTAssertEqual(semanticHeaders[0].frame.x, nameRect.minX, accuracy: 0.5)
         XCTAssertEqual(semanticHeaders[0].frame.width, nameRect.width, accuracy: 0.5)
         XCTAssertEqual(semanticHeaders[1].frame.x, eventsRect.minX, accuracy: 0.5)
         XCTAssertEqual(semanticHeaders[1].frame.width, eventsRect.width, accuracy: 0.5)
+        XCTAssertLessThan(semanticHeaders[1].frame.width, unclippedEventsRect.width)
         XCTAssertTrue(semanticHeaders.allSatisfy { $0.frame.height >= 20 })
     }
 }
