@@ -29649,7 +29649,7 @@ var InspectorWindowServer = class {
 
 // packages/mcp/src/server.ts
 var VERSION = "0.1.1";
-var RESOURCE_REVISION = true ? "6f4e24ba1048f5ee" : "development";
+var RESOURCE_REVISION = true ? "3d5c1de7feebde37" : "development";
 function installedPluginVersion() {
   try {
     const manifest = JSON.parse(

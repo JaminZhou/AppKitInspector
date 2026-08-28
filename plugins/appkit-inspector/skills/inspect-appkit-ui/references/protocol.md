@@ -68,6 +68,12 @@ AppKit view frames use bottom-left coordinates. The Inspector window converts th
 percentages using the selected capture root. Window mode uses the frame view, so title-bar buttons
 and content share one coordinate space. Refresh after moving or resizing the target.
 
+The serialized hierarchy can include precise virtual semantic nodes for AppKit elements that are
+drawn as cells rather than independent views. `NSTableHeaderCell` nodes use
+`NSTableHeaderView.headerRect(ofColumn:)`, retain the owning column title and identifier, and share
+the same root-relative coordinate system. Broad internal backing views such as `shapeView` are not
+native Browser comment targets merely because they carry a private identifier.
+
 ## Capture scope
 
 The probe captures entirely inside the inspected process with public Apple SDK APIs. Content uses

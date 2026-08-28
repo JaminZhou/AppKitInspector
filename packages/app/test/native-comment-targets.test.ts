@@ -38,6 +38,13 @@ const root: CommentTargetNode = {
       subviews: [],
     },
     {
+      id: "shape-view",
+      className: "NSView",
+      frame: { x: 240, y: 560, width: 560, height: 20 },
+      identifier: "shapeView",
+      subviews: [],
+    },
+    {
       id: "outside",
       className: "NSButton",
       frame: { x: 900, y: 20, width: 30, height: 20 },
@@ -60,4 +67,43 @@ test("native Browser comment target IDs are stable and DOM-safe", () => {
   assert.equal(first, nativeCommentTargetID("0x0000000100abcdef:42"));
   assert.match(first, /^appkit-view-[a-z0-9]+$/);
   assert.notEqual(first, nativeCommentTargetID("0x0000000100abcdef:43"));
+});
+
+test("table header virtual nodes expose one precise comment target per column", () => {
+  const tableRoot: CommentTargetNode = {
+    id: "root",
+    className: "NSThemeFrame",
+    frame: { x: 0, y: 0, width: 800, height: 600 },
+    subviews: [{
+      id: "header",
+      className: "NSTableHeaderView",
+      frame: { x: 200, y: 520, width: 600, height: 24 },
+      subviews: [
+        {
+          id: "header:name",
+          className: "NSTableHeaderCell",
+          frame: { x: 200, y: 520, width: 360, height: 24 },
+          identifier: "Name",
+          label: "Name",
+          subviews: [],
+        },
+        {
+          id: "header:events",
+          className: "NSTableHeaderCell",
+          frame: { x: 560, y: 520, width: 100, height: 24 },
+          identifier: "Events",
+          label: "Events",
+          subviews: [],
+        },
+      ],
+    }],
+  };
+
+  const targets = nativeCommentTargets(tableRoot, tableRoot.frame);
+
+  assert.deepEqual(targets.map(({ node }) => node.id), ["header:name", "header:events"]);
+  assert.equal(
+    nativeCommentTargetLabel(targets[1]!),
+    "AppKit view: NSTableHeaderCell — Events",
+  );
 });
