@@ -22,6 +22,8 @@ for a coding task.
   the live view cache, while the frame region uses AppKit PDF drawing and restores the real standard
   window buttons from the cache.
 - Click the captured interface and identify the deepest native `NSView`.
+- Select and comment individual `NSTableHeaderCell` regions even though AppKit draws column headers
+  as cells rather than independent views.
 - Review class names, frames, accessibility metadata, and ancestor paths.
 - Use Codex Browser's native comments to annotate one or many semantic AppKit view targets and
   deliver them directly to the current Codex task. AppKit Inspector does not duplicate that UI with

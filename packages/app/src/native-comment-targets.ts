@@ -56,9 +56,10 @@ function intersectsWindow(rect: CommentTargetRect, windowFrame: CommentTargetRec
 }
 
 function isSemanticView(node: CommentTargetNode): boolean {
-  if (node.label?.trim() || node.identifier?.trim()) return true;
+  if (node.label?.trim()) return true;
   if (node.className.startsWith("_")) return false;
   if (GENERIC_CONTAINER_CLASSES.has(node.className)) return false;
+  if (node.identifier?.trim()) return true;
   const isProductView = node.className.includes(".") && !node.className.startsWith("AppKit.");
   return node.subviews.length === 0 || isProductView;
 }

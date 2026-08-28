@@ -74,6 +74,10 @@ enum ViewSnapshotter {
 
     static func viewNode(_ view: NSView, relativeTo rootView: NSView, window: NSWindow) -> ProbeViewNode {
         let frame = view === rootView ? rootView.bounds : view.convert(view.bounds, to: rootView)
+        var subviews = view.subviews.map { viewNode($0, relativeTo: rootView, window: window) }
+        if let headerView = view as? NSTableHeaderView {
+            subviews.append(contentsOf: tableHeaderCellNodes(headerView, relativeTo: rootView))
+        }
         return ProbeViewNode(
             id: objectID(view),
             className: NSStringFromClass(type(of: view)),
@@ -84,8 +88,44 @@ enum ViewSnapshotter {
             identifier: view.identifier?.rawValue,
             label: semanticLabel(for: view, window: window) ?? view.accessibilityLabel(),
             role: view.accessibilityRole()?.rawValue,
-            subviews: view.subviews.map { viewNode($0, relativeTo: rootView, window: window) }
+            subviews: subviews
         )
+    }
+
+    static func tableHeaderCellNodes(
+        _ headerView: NSTableHeaderView,
+        relativeTo rootView: NSView
+    ) -> [ProbeViewNode] {
+        guard let tableView = headerView.tableView else { return [] }
+        return tableView.tableColumns.enumerated().compactMap { element -> ProbeViewNode? in
+            let (index, column) = element
+            guard !column.isHidden else { return nil }
+            let localFrame = headerView.headerRect(ofColumn: index)
+                .intersection(headerView.visibleRect)
+            guard !localFrame.isNull,
+                  localFrame.width >= 2,
+                  localFrame.height >= 2
+            else { return nil }
+            let frame = headerView.convert(localFrame, to: rootView)
+            let identifier = column.identifier.rawValue
+            return ProbeViewNode(
+                id: "\(objectID(headerView)):header:\(index):\(identifier)",
+                className: "NSTableHeaderCell",
+                frame: ProbeRect(frame),
+                bounds: ProbeRect(
+                    x: 0,
+                    y: 0,
+                    width: localFrame.width,
+                    height: localFrame.height
+                ),
+                hidden: false,
+                alpha: Double(headerView.alphaValue),
+                identifier: identifier.isEmpty ? nil : identifier,
+                label: column.title.isEmpty ? identifier : column.title,
+                role: "AXColumnHeader",
+                subviews: []
+            )
+        }
     }
 
     private static func captureContext(scope: ProbeCaptureScope) throws -> CaptureContext {

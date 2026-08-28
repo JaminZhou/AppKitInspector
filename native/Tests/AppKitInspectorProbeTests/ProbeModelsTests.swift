@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import AppKitInspectorProbe
 
@@ -42,5 +43,41 @@ final class ProbeModelsTests: XCTestCase {
             let data = try JSONEncoder().encode(mode)
             XCTAssertEqual(try JSONDecoder().decode(ProbeCaptureMode.self, from: data), mode)
         }
+    }
+
+    @MainActor
+    func testTableHeaderCellsAreExposedAsPreciseSemanticNodes() throws {
+        let tableView = NSTableView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+        let nameColumn = NSTableColumn(identifier: .init("name"))
+        nameColumn.title = "Name"
+        nameColumn.width = 180
+        let eventsColumn = NSTableColumn(identifier: .init("events"))
+        eventsColumn.title = "Events"
+        eventsColumn.width = 120
+        tableView.addTableColumn(nameColumn)
+        tableView.addTableColumn(eventsColumn)
+
+        let headerView = NSTableHeaderView(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        tableView.headerView = headerView
+        let clipView = NSClipView(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        clipView.documentView = headerView
+        clipView.scroll(to: .zero)
+        let unclippedEventsRect = headerView.headerRect(ofColumn: 1)
+        let semanticHeaders = ViewSnapshotter.tableHeaderCellNodes(
+            headerView,
+            relativeTo: headerView
+        )
+
+        XCTAssertEqual(semanticHeaders.map(\.label), ["Name", "Events"])
+        XCTAssertEqual(semanticHeaders.map(\.identifier), ["name", "events"])
+        XCTAssertEqual(semanticHeaders.map(\.role), ["AXColumnHeader", "AXColumnHeader"])
+        let nameRect = headerView.headerRect(ofColumn: 0)
+        let eventsRect = headerView.headerRect(ofColumn: 1).intersection(headerView.visibleRect)
+        XCTAssertEqual(semanticHeaders[0].frame.x, nameRect.minX, accuracy: 0.5)
+        XCTAssertEqual(semanticHeaders[0].frame.width, nameRect.width, accuracy: 0.5)
+        XCTAssertEqual(semanticHeaders[1].frame.x, eventsRect.minX, accuracy: 0.5)
+        XCTAssertEqual(semanticHeaders[1].frame.width, eventsRect.width, accuracy: 0.5)
+        XCTAssertLessThan(semanticHeaders[1].frame.width, unclippedEventsRect.width)
+        XCTAssertTrue(semanticHeaders.allSatisfy { $0.frame.height >= 20 })
     }
 }
