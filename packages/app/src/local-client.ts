@@ -6,6 +6,7 @@ export type StandaloneConnection = {
 
 export type CaptureScope = "content" | "windowFrame";
 export type CaptureMode = "hybrid" | "exact";
+export type CaptureActivation = "current" | "active";
 
 type LocationLike = {
   protocol: string;
@@ -33,8 +34,12 @@ export class LocalInspectorClient {
     private readonly request: typeof fetch = globalThis.fetch.bind(globalThis),
   ) {}
 
-  snapshot<T>(scope: CaptureScope, mode: CaptureMode): Promise<T> {
-    const query = new URLSearchParams({ scope, mode });
+  snapshot<T>(
+    scope: CaptureScope,
+    mode: CaptureMode,
+    activation: CaptureActivation = "current",
+  ): Promise<T> {
+    const query = new URLSearchParams({ scope, mode, activation });
     return this.call<T>(`/api/snapshot?${query.toString()}`);
   }
 
@@ -42,10 +47,16 @@ export class LocalInspectorClient {
     return this.call<T>("/api/target");
   }
 
-  inspect<T>(x: number, y: number, scope: CaptureScope, mode: CaptureMode): Promise<T> {
+  inspect<T>(
+    x: number,
+    y: number,
+    scope: CaptureScope,
+    mode: CaptureMode,
+    activation: CaptureActivation = "current",
+  ): Promise<T> {
     return this.call<T>("/api/inspect", {
       method: "POST",
-      body: JSON.stringify({ x, y, scope, mode }),
+      body: JSON.stringify({ x, y, scope, mode, activation }),
     });
   }
 

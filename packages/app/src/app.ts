@@ -1,5 +1,6 @@
 import { App } from "@modelcontextprotocol/ext-apps";
 import {
+  type CaptureActivation,
   type CaptureMode,
   type CaptureScope,
   LocalInspectorClient,
@@ -38,6 +39,8 @@ type Snapshot = {
     contentFrame?: Rect;
     captureScope?: CaptureScope;
     requestedCaptureMode?: CaptureMode;
+    requestedCaptureActivation?: CaptureActivation;
+    capturedWindowWasActive?: boolean;
     captureRendering?: "viewCache" | "windowFrameHybrid" | "windowServerExact";
     captureFallbackReason?: string;
   };
@@ -86,7 +89,8 @@ let manualZoom = 1;
 let fittedZoom = 1;
 let zoomObserver: ResizeObserver | undefined;
 let captureScope: CaptureScope = "windowFrame";
-let captureMode: CaptureMode = "hybrid";
+const captureMode: CaptureMode = "exact";
+let captureActivation: CaptureActivation = "current";
 const TARGET_POLL_INTERVAL_MS = 1_500;
 
 function isState(value: unknown): value is State {
@@ -190,24 +194,21 @@ function snapshotCaptureScope(snapshot: Snapshot): CaptureScope {
   return snapshot.window.captureScope ?? "content";
 }
 
-function snapshotCaptureMode(snapshot: Snapshot): CaptureMode {
-  return snapshot.window.requestedCaptureMode ?? "hybrid";
+function snapshotCaptureActivation(snapshot: Snapshot): CaptureActivation {
+  return snapshot.window.requestedCaptureActivation ?? "current";
 }
 
 function captureBadge(snapshot: Snapshot): string {
   const rendering = snapshot.window.captureRendering;
-  if (rendering === "windowServerExact") {
-    return '<span class="capture-note exact" title="Captured from this Debug app’s own WindowServer window through public ScreenCaptureKit APIs.">Exact Window</span>';
-  }
-  if (rendering === "windowFrameHybrid") {
-    const fallback = snapshot.window.captureFallbackReason;
-    const label = fallback ? "Hybrid fallback" : "Hybrid AppKit";
-    const title = fallback
-      ? `Exact Window was unavailable: ${fallback}`
-      : "System toolbar materials are reconstructed with public AppKit drawing.";
-    return `<span class="capture-note${fallback ? " warning" : ""}" title="${escapeHTML(title)}">${label}</span>`;
-  }
-  return '<span class="capture-note" title="Captured from the application content view.">View Cache</span>';
+  if (rendering === "windowServerExact") return "";
+  const fallback = snapshot.window.captureFallbackReason;
+  const detail = rendering === "windowFrameHybrid"
+    ? "Hybrid AppKit"
+    : rendering === "viewCache"
+      ? "View Cache"
+      : "Legacy Target";
+  const reason = fallback ?? "The connected Debug target did not return exact WindowServer pixels; rebuild it against the current probe.";
+  return `<span class="capture-note warning" title="${escapeHTML(reason)}">Compatibility Preview · ${detail}</span>`;
 }
 
 function effectiveZoom(): number {
@@ -316,7 +317,7 @@ function renderWorkspace(root: HTMLDivElement): void {
   }
   const snapshot = state.snapshot;
   const actualScope = snapshotCaptureScope(snapshot);
-  const actualMode = snapshotCaptureMode(snapshot);
+  const actualActivation = snapshotCaptureActivation(snapshot);
   const node = selectedNode ?? state.selected?.node;
   const treeRows = rows(snapshot.root)
     .map(
@@ -336,10 +337,7 @@ function renderWorkspace(root: HTMLDivElement): void {
           <button type="button" data-capture-scope="windowFrame" aria-pressed="${actualScope === "windowFrame"}" title="Include title bar and window controls">Window</button>
           <button type="button" data-capture-scope="content" aria-pressed="${actualScope === "content"}" title="Show only the application content view">Content</button>
         </div>
-        ${actualScope === "windowFrame" ? `<div class="capture-mode-controls" role="group" aria-label="Window rendering">
-          <button type="button" data-capture-mode="hybrid" aria-pressed="${actualMode === "hybrid"}" title="Permission-free AppKit reconstruction">Hybrid</button>
-          <button type="button" data-capture-mode="exact" aria-pressed="${actualMode === "exact"}" title="Exact current-process WindowServer pixels">Exact</button>
-        </div>` : ""}
+        <button type="button" id="capture-active" aria-pressed="${actualActivation === "active"}" title="Temporarily activate the inspected app for each capture, then return focus">Active Appearance</button>
         ${captureBadge(snapshot)}
         <div class="zoom-controls" role="group" aria-label="Snapshot zoom">
           <button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom Out">−</button>
@@ -377,11 +375,8 @@ function renderWorkspace(root: HTMLDivElement): void {
       if (scope === "content" || scope === "windowFrame") void switchCaptureScope(scope);
     });
   });
-  root.querySelectorAll<HTMLButtonElement>("[data-capture-mode]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const mode = button.dataset.captureMode;
-      if (mode === "hybrid" || mode === "exact") void switchCaptureMode(mode);
-    });
+  root.querySelector<HTMLButtonElement>("#capture-active")?.addEventListener("click", () => {
+    void switchCaptureActivation(actualActivation === "active" ? "current" : "active");
   });
   installZoomControls(root, snapshot);
   root.querySelector<HTMLButtonElement>(".hit-surface")?.addEventListener("click", (event) => {
@@ -518,17 +513,32 @@ async function closeFullscreen(): Promise<void> {
 }
 
 async function snapshotRequest(): Promise<unknown> {
-  if (localClient) return await localClient.snapshot<State>(captureScope, captureMode);
-  return await callInspectorTool("appkit_snapshot", { scope: captureScope, mode: captureMode });
+  if (localClient) {
+    return await localClient.snapshot<State>(captureScope, captureMode, captureActivation);
+  }
+  return await callInspectorTool("appkit_snapshot", {
+    scope: captureScope,
+    mode: captureMode,
+    activation: captureActivation,
+  });
 }
 
 async function inspectRequest(x: number, y: number): Promise<unknown> {
-  if (localClient) return await localClient.inspect<State>(x, y, captureScope, captureMode);
+  if (localClient) {
+    return await localClient.inspect<State>(
+      x,
+      y,
+      captureScope,
+      captureMode,
+      captureActivation,
+    );
+  }
   return await callInspectorTool("appkit_inspect_point", {
     x,
     y,
     scope: captureScope,
     mode: captureMode,
+    activation: captureActivation,
   });
 }
 
@@ -543,13 +553,13 @@ async function refresh(): Promise<boolean> {
     if (!isState(nextState)) throw new Error("Inspector returned an invalid snapshot");
     state = nextState;
     captureScope = snapshotCaptureScope(nextState.snapshot);
-    captureMode = snapshotCaptureMode(nextState.snapshot);
+    captureActivation = snapshotCaptureActivation(nextState.snapshot);
     selectedNode = undefined;
     selectedPath = undefined;
     toast = requestedScope !== captureScope
       ? "Window Frame requires a rebuilt Debug target; showing Content instead"
       : nextState.snapshot.window.captureFallbackReason
-        ? `Exact Window unavailable; using Hybrid: ${nextState.snapshot.window.captureFallbackReason}`
+        ? `Exact capture unavailable; using compatibility preview: ${nextState.snapshot.window.captureFallbackReason}`
       : nextState.isMock
         ? "Explore the mock UI or connect a Debug target"
         : `${captureScope === "windowFrame" ? "Window Frame" : "Content"} snapshot refreshed`;
@@ -599,13 +609,15 @@ async function switchCaptureScope(scope: CaptureScope): Promise<void> {
   await refresh();
 }
 
-async function switchCaptureMode(mode: CaptureMode): Promise<void> {
-  if (loading || mode === captureMode) return;
-  captureMode = mode;
+async function switchCaptureActivation(activation: CaptureActivation): Promise<void> {
+  if (loading || activation === captureActivation) return;
+  captureActivation = activation;
   state = undefined;
   selectedNode = undefined;
   selectedPath = undefined;
-  toast = mode === "exact" ? "Loading Exact Window…" : "Loading Hybrid AppKit…";
+  toast = activation === "active"
+    ? "Temporarily activating the inspected app for a true-appearance capture…"
+    : "Loading the inspected window’s current state…";
   render();
   await refresh();
 }
@@ -619,7 +631,7 @@ async function inspect(x: number, y: number): Promise<void> {
     if (!isState(nextState)) throw new Error("Inspector returned an invalid selection");
     state = nextState;
     captureScope = snapshotCaptureScope(nextState.snapshot);
-    captureMode = snapshotCaptureMode(nextState.snapshot);
+    captureActivation = snapshotCaptureActivation(nextState.snapshot);
     selectedNode = nextState.selected?.node;
     selectedPath = nextState.selected?.ancestorPath;
     toast = selectedNode ? `Selected ${selectedNode.className}` : "No view at that point";

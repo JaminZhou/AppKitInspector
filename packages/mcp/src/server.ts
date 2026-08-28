@@ -9,9 +9,11 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import {
   captureModeSchema,
+  captureActivationSchema,
   captureScopeSchema,
   flattenViews,
   type CaptureMode,
+  type CaptureActivation,
   type CaptureScope,
   type InspectResult,
   type Snapshot,
@@ -124,13 +126,14 @@ export class InspectorSession {
 
   private async liveSnapshot(
     scope: CaptureScope = "windowFrame",
-    mode: CaptureMode = "hybrid",
+    mode: CaptureMode = "exact",
+    activation: CaptureActivation = "current",
   ): Promise<{ target: Target; snapshot: Snapshot } | undefined> {
     if (this.selectedTarget) {
       try {
         return {
           target: this.selectedTarget,
-          snapshot: await requestSnapshot(this.selectedTarget, scope, mode),
+          snapshot: await requestSnapshot(this.selectedTarget, scope, mode, activation),
         };
       } catch {}
     }
@@ -139,7 +142,7 @@ export class InspectorSession {
     const target = preferredTarget(targets, this.selectedTarget);
     if (!target) return undefined;
     try {
-      const snapshot = await requestSnapshot(target, scope, mode);
+      const snapshot = await requestSnapshot(target, scope, mode, activation);
       this.selectedTarget = target;
       return { target, snapshot };
     } catch {
@@ -168,11 +171,12 @@ export class InspectorSession {
 
   async preview(
     scope: CaptureScope = "windowFrame",
-    mode: CaptureMode = "hybrid",
+    mode: CaptureMode = "exact",
+    activation: CaptureActivation = "current",
   ): Promise<PreviewState> {
-    const live = await this.liveSnapshot(scope, mode);
+    const live = await this.liveSnapshot(scope, mode, activation);
     if (!live) {
-      const snapshot = mockSnapshot(scope, mode);
+      const snapshot = mockSnapshot(scope, mode, activation);
       return { connected: false, isMock: true, snapshot };
     }
     return {
@@ -186,12 +190,13 @@ export class InspectorSession {
     x: number,
     y: number,
     scope: CaptureScope = "windowFrame",
-    mode: CaptureMode = "hybrid",
+    mode: CaptureMode = "exact",
+    activation: CaptureActivation = "current",
   ): Promise<PreviewState> {
-    if (!this.selectedTarget) await this.liveSnapshot(scope, mode);
+    if (!this.selectedTarget) await this.liveSnapshot(scope, mode, activation);
     const selected = this.selectedTarget
-      ? await requestInspectPoint(this.selectedTarget, x, y, scope, mode)
-      : inspectMockPoint(x, y, scope, mode);
+      ? await requestInspectPoint(this.selectedTarget, x, y, scope, mode, activation)
+      : inspectMockPoint(x, y, scope, mode, activation);
     return {
       connected: Boolean(this.selectedTarget),
       isMock: !this.selectedTarget,
@@ -380,12 +385,13 @@ export function createServer(
       inputSchema: {
         scope: captureScopeSchema.optional(),
         mode: captureModeSchema.optional(),
+        activation: captureActivationSchema.optional(),
       },
       annotations: { readOnlyHint: true },
       _meta: outputMetadata("app", true),
     },
-    async ({ scope, mode }) => {
-      const state = await session.preview(scope, mode);
+    async ({ scope, mode, activation }) => {
+      const state = await session.preview(scope, mode, activation);
       return toolResult("Refreshed AppKit snapshot.", state);
     },
   );
@@ -400,12 +406,13 @@ export function createServer(
         y: z.number().min(0).max(1),
         scope: captureScopeSchema.optional(),
         mode: captureModeSchema.optional(),
+        activation: captureActivationSchema.optional(),
       },
       annotations: { readOnlyHint: true },
       _meta: outputMetadata("app", true),
     },
-    async ({ x, y, scope, mode }) => {
-      const state = await session.inspect(x, y, scope, mode);
+    async ({ x, y, scope, mode, activation }) => {
+      const state = await session.inspect(x, y, scope, mode, activation);
       const node = state.selected?.node;
       return toolResult(
         node ? `Selected ${node.className}${node.label ? ` (${node.label})` : ""}.` : "No view selected.",

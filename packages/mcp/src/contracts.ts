@@ -40,6 +40,8 @@ export const captureScopeSchema = z.enum(["content", "windowFrame"]);
 export type CaptureScope = z.infer<typeof captureScopeSchema>;
 export const captureModeSchema = z.enum(["hybrid", "exact"]);
 export type CaptureMode = z.infer<typeof captureModeSchema>;
+export const captureActivationSchema = z.enum(["current", "active"]);
+export type CaptureActivation = z.infer<typeof captureActivationSchema>;
 export const captureRenderingSchema = z.enum([
   "viewCache",
   "windowFrameHybrid",
@@ -59,7 +61,13 @@ export const targetSchema = z.object({
 export const publicTargetSchema = targetSchema.omit({ token: true });
 
 export const snapshotSchema = z.object({
-  schemaVersion: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+  schemaVersion: z.union([
+    z.literal(1),
+    z.literal(2),
+    z.literal(3),
+    z.literal(4),
+    z.literal(5),
+  ]),
   target: publicTargetSchema,
   window: z.object({
     id: z.string(),
@@ -68,6 +76,8 @@ export const snapshotSchema = z.object({
     contentFrame: rectSchema.optional(),
     captureScope: captureScopeSchema.optional(),
     requestedCaptureMode: captureModeSchema.optional(),
+    requestedCaptureActivation: captureActivationSchema.optional(),
+    capturedWindowWasActive: z.boolean().optional(),
     captureRendering: captureRenderingSchema.optional(),
     captureFallbackReason: z.string().optional(),
   }),

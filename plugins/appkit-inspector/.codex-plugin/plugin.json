@@ -1,6 +1,6 @@
 {
   "name": "appkit-inspector",
-  "version": "0.1.1+codex.20260828013220",
+  "version": "0.1.1+codex.20260828161426",
   "description": "Inspect live native AppKit interfaces and comment on semantic views in Codex Browser.",
   "author": {
     "name": "Jamin Zhou"

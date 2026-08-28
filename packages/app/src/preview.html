@@ -39,13 +39,13 @@
       .zoom-controls button { min-width: 28px; padding-inline: 7px; }
       .zoom-controls button[aria-pressed="true"] { background: var(--selection); border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); }
       .zoom-controls output { width: 42px; color: var(--muted); font-variant-numeric: tabular-nums; text-align: center; }
-      .scope-controls, .capture-mode-controls { flex: none; display: flex; align-items: center; gap: 0; }
-      .scope-controls button, .capture-mode-controls button { border-radius: 0; }
-      .scope-controls button:first-child, .capture-mode-controls button:first-child { border-radius: 7px 0 0 7px; }
-      .scope-controls button:last-child, .capture-mode-controls button:last-child { margin-left: -1px; border-radius: 0 7px 7px 0; }
-      .scope-controls button[aria-pressed="true"], .capture-mode-controls button[aria-pressed="true"] { position: relative; color: white; border-color: var(--accent); background: var(--accent); }
+      .scope-controls { flex: none; display: flex; align-items: center; gap: 0; }
+      .scope-controls button { border-radius: 0; }
+      .scope-controls button:first-child { border-radius: 7px 0 0 7px; }
+      .scope-controls button:last-child { margin-left: -1px; border-radius: 0 7px 7px 0; }
+      .scope-controls button[aria-pressed="true"] { position: relative; color: white; border-color: var(--accent); background: var(--accent); }
+      #capture-active[aria-pressed="true"] { color: white; border-color: var(--accent); background: var(--accent); }
       .capture-note { flex: none; padding: 3px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 11px; white-space: nowrap; }
-      .capture-note.exact { color: light-dark(#176d34, #79d991); border-color: color-mix(in srgb, currentColor 45%, var(--line)); }
       .capture-note.warning { color: light-dark(#8a5b00, #ffd479); border-color: color-mix(in srgb, currentColor 45%, var(--line)); }
       .launcher { min-height: 0; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 16px; }
       .launcher > div:first-child { min-width: 0; display: grid; gap: 4px; }

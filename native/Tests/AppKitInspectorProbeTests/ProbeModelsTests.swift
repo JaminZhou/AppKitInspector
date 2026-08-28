@@ -45,6 +45,35 @@ final class ProbeModelsTests: XCTestCase {
         }
     }
 
+    func testCaptureActivationsRoundTrip() throws {
+        for activation in [ProbeCaptureActivation.current, .active] {
+            let data = try JSONEncoder().encode(activation)
+            XCTAssertEqual(try JSONDecoder().decode(ProbeCaptureActivation.self, from: data), activation)
+        }
+    }
+
+    @MainActor
+    func testExactContentCropRectMapsAppKitCoordinatesToImageCoordinates() {
+        let crop = ViewSnapshotter.exactContentCropRect(
+            frameBounds: NSRect(x: 0, y: 0, width: 1000, height: 700),
+            contentFrame: NSRect(x: 0, y: 0, width: 1000, height: 648),
+            imageSize: CGSize(width: 2000, height: 1400)
+        )
+
+        XCTAssertEqual(crop, CGRect(x: 0, y: 104, width: 2000, height: 1296))
+    }
+
+    @MainActor
+    func testExactContentCropRectClampsToCapturedImage() {
+        let crop = ViewSnapshotter.exactContentCropRect(
+            frameBounds: NSRect(x: 0, y: 0, width: 100, height: 100),
+            contentFrame: NSRect(x: -5, y: -5, width: 110, height: 110),
+            imageSize: CGSize(width: 200, height: 200)
+        )
+
+        XCTAssertEqual(crop, CGRect(x: 0, y: 0, width: 200, height: 200))
+    }
+
     @MainActor
     func testTableHeaderCellsAreExposedAsPreciseSemanticNodes() throws {
         let tableView = NSTableView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))

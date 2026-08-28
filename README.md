@@ -16,11 +16,15 @@ for a coding task.
 
 - Inspect a real AppKit window frame, title bar, traffic-light controls, toolbar, and content without
   Accessibility or Screen Recording permission.
-- Choose **Exact** on macOS 14.4 or later to capture the inspected Debug process's own WindowServer
-  pixels through ScreenCaptureKit without Screen Recording permission or access to other apps.
-- Keep modern toolbar controls readable with a public-AppKit **Hybrid** fallback: the content stays on
-  the live view cache, while the frame region uses AppKit PDF drawing and restores the real standard
-  window buttons from the cache.
+- Capture real pixels by default on macOS 14.4 or later from the inspected Debug process's own
+  WindowServer window through ScreenCaptureKit, without Screen Recording permission or access to
+  other apps. **Content** is cropped from that same exact image, so appearance stays consistent.
+- Choose **Active Appearance** to temporarily make the inspected window key for each
+  capture, record its real emphasized AppKit state, and cooperatively return focus to the previous
+  application. This is explicit because macOS cannot keep two applications active simultaneously.
+- If exact capture is unavailable, automatically keep the Inspector usable with an honestly labeled
+  compatibility preview and the failure reason. The legacy Hybrid/View Cache paths are fallback
+  implementation details rather than normal UI choices.
 - Click the captured interface and identify the deepest native `NSView`.
 - Select and comment individual `NSTableHeaderCell` regions even though AppKit draws column headers
   as cells rather than independent views.
@@ -69,9 +73,10 @@ Use AppKit Inspector to connect to the running demo and open it in Codex Browser
 explicitly presents the right Browser panel after navigation. In the Inspector, use **Fit**, **−**,
 and **+** to resize the snapshot; trackpad pinch and Command-modified scrolling also zoom.
 Use **Window** for title-bar and frame inspection or **Content** for a focused content-only view.
-Window mode starts with its permission-free Hybrid preview. Choose **Exact** for the current
-process's real WindowServer pixels; if the OS cannot provide them, the Inspector labels the honest
-Hybrid fallback and its reason. Use Content when only the content view matters.
+Both scopes use the current process's real WindowServer pixels by default; Content crops the same
+capture to the application content view. If the OS cannot provide exact pixels, the Inspector shows
+an honest compatibility-preview badge and reason. Enable **Active Appearance** when selection,
+focus, or toolbar emphasis must match the inspected app's foreground appearance.
 In Codex Browser, use its native comment mode. AppKit Inspector exposes each reviewable native view
 as a semantic comment target, so comments reach the current task with the specific AppKit class and
 hierarchy instead of targeting the whole screenshot. Multiple native comments can be submitted as
@@ -162,7 +167,7 @@ replacement with the same bundle identifier and refreshes the snapshot without r
 The probe and Inspector servers bind only to loopback, require random credentials, and write
 user-private discovery data. Codex Browser launch links are single-use and become HttpOnly,
 same-site sessions. The project uses public Apple SDK APIs and does not use injection, Accessibility
-automation, private frameworks, or Screen Recording permission. Exact Window is restricted to
+automation, private frameworks, or Screen Recording permission. Exact capture is restricted to
 `SCShareableContent.currentProcess`, so it cannot enumerate or capture another process's windows.
 
 Captured screenshots, hierarchy data, and Codex Browser comments are sensitive. When used through
