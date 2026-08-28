@@ -1,26 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectMockPoint, mockSnapshot } from "../src/mock.js";
-import type { CaptureMode, CaptureScope } from "../src/contracts.js";
+import type { CaptureActivation, CaptureMode, CaptureScope } from "../src/contracts.js";
 import { InspectorWindowServer } from "../src/window-server.js";
 
 test("standalone inspector supports fragment Bearer and single-use Browser sessions", async () => {
   const scopes: CaptureScope[] = [];
   const modes: CaptureMode[] = [];
+  const activations: CaptureActivation[] = [];
   const server = new InspectorWindowServer(
     {
       async targetState() {
         return { connected: false };
       },
-      async preview(scope = "windowFrame", mode = "hybrid") {
+      async preview(scope = "windowFrame", mode = "exact", activation = "current") {
         scopes.push(scope);
         modes.push(mode);
-        return { connected: false, isMock: true, snapshot: mockSnapshot(scope, mode) };
+        activations.push(activation);
+        return { connected: false, isMock: true, snapshot: mockSnapshot(scope, mode, activation) };
       },
-      async inspect(x, y, scope = "windowFrame", mode = "hybrid") {
+      async inspect(x, y, scope = "windowFrame", mode = "exact", activation = "current") {
         scopes.push(scope);
         modes.push(mode);
-        const selected = inspectMockPoint(x, y, scope, mode);
+        activations.push(activation);
+        const selected = inspectMockPoint(x, y, scope, mode, activation);
         return { connected: false, isMock: true, snapshot: selected.snapshot, selected };
       },
     },
@@ -65,7 +68,7 @@ test("standalone inspector supports fragment Bearer and single-use Browser sessi
     assert.match(cookie, /SameSite=Strict/);
     const reused = await fetch(browserLaunch, { redirect: "manual" });
     assert.equal(reused.status, 401);
-    const browserSnapshot = await fetch(`${windowURL.origin}/api/snapshot?scope=content&mode=exact`, {
+    const browserSnapshot = await fetch(`${windowURL.origin}/api/snapshot?scope=content&mode=exact&activation=active`, {
       headers: { Cookie: cookie.split(";", 1)[0] ?? "" },
     });
     assert.equal(browserSnapshot.status, 200);
@@ -73,6 +76,7 @@ test("standalone inspector supports fragment Bearer and single-use Browser sessi
     assert.equal(browserState.isMock, true);
     assert.equal(browserState.snapshot.window.captureScope, "content");
     assert.equal(browserState.snapshot.window.requestedCaptureMode, "exact");
+    assert.equal(browserState.snapshot.window.requestedCaptureActivation, "active");
 
     const authorization = { Authorization: `Bearer ${token}` };
     const target = await fetch(`${windowURL.origin}/api/target`, { headers: authorization });
@@ -80,7 +84,9 @@ test("standalone inspector supports fragment Bearer and single-use Browser sessi
     assert.deepEqual(await target.json(), { connected: false });
     const snapshot = await fetch(`${windowURL.origin}/api/snapshot`, { headers: authorization });
     assert.equal(snapshot.status, 200);
-    assert.equal((await snapshot.json()).isMock, true);
+    const defaultSnapshot = await snapshot.json();
+    assert.equal(defaultSnapshot.isMock, true);
+    assert.equal(defaultSnapshot.snapshot.window.requestedCaptureMode, "exact");
 
     const wrongOrigin = await fetch(`${windowURL.origin}/api/inspect`, {
       method: "POST",
@@ -92,7 +98,7 @@ test("standalone inspector supports fragment Bearer and single-use Browser sessi
     const inspected = await fetch(`${windowURL.origin}/api/inspect`, {
       method: "POST",
       headers: { ...authorization, "Content-Type": "application/json", Origin: windowURL.origin },
-      body: JSON.stringify({ x: 0.5, y: 0.5, mode: "exact" }),
+      body: JSON.stringify({ x: 0.5, y: 0.5, mode: "exact", activation: "active" }),
     });
     assert.equal(inspected.status, 200);
     assert.equal(typeof (await inspected.json()).selected?.node?.className, "string");
@@ -100,6 +106,7 @@ test("standalone inspector supports fragment Bearer and single-use Browser sessi
     assert.ok(scopes.includes("windowFrame"));
     assert.ok(scopes.includes("content"));
     assert.ok(modes.includes("exact"));
+    assert.ok(activations.includes("active"));
   } finally {
     await server.close();
   }

@@ -5,22 +5,35 @@ import { inspectMockPoint, mockSnapshot } from "../src/mock.js";
 
 test("mock snapshot satisfies the transport contract", () => {
   const snapshot = snapshotSchema.parse(mockSnapshot());
-  assert.equal(snapshot.schemaVersion, 4);
+  assert.equal(snapshot.schemaVersion, 5);
   assert.equal(snapshot.window.captureScope, "windowFrame");
-  assert.equal(snapshot.window.requestedCaptureMode, "hybrid");
+  assert.equal(snapshot.window.requestedCaptureMode, "exact");
+  assert.equal(snapshot.window.requestedCaptureActivation, "current");
+  assert.equal(snapshot.window.capturedWindowWasActive, false);
   assert.equal(snapshot.window.captureRendering, "windowFrameHybrid");
+  assert.match(snapshot.window.captureFallbackReason ?? "", /mock target/);
   assert.ok(flattenViews(snapshot.root).some((view) => view.label === "Close Window"));
   assert.match(snapshot.imageDataURL, /^data:image\/svg\+xml;base64,/);
 
   const content = snapshotSchema.parse(mockSnapshot("content"));
   assert.equal(content.window.captureScope, "content");
   assert.equal(content.window.captureRendering, "viewCache");
+  assert.match(content.window.captureFallbackReason ?? "", /mock target/);
   assert.equal(flattenViews(content.root).some((view) => view.label === "Close Window"), false);
 
   const exactFallback = snapshotSchema.parse(mockSnapshot("windowFrame", "exact"));
   assert.equal(exactFallback.window.requestedCaptureMode, "exact");
   assert.equal(exactFallback.window.captureRendering, "windowFrameHybrid");
   assert.match(exactFallback.window.captureFallbackReason ?? "", /mock target/);
+
+  const explicitHybrid = snapshotSchema.parse(mockSnapshot("windowFrame", "hybrid"));
+  assert.equal(explicitHybrid.window.requestedCaptureMode, "hybrid");
+  assert.equal(explicitHybrid.window.captureRendering, "windowFrameHybrid");
+  assert.equal(explicitHybrid.window.captureFallbackReason, undefined);
+
+  const active = snapshotSchema.parse(mockSnapshot("windowFrame", "exact", "active"));
+  assert.equal(active.window.requestedCaptureActivation, "active");
+  assert.equal(active.window.capturedWindowWasActive, false);
 });
 
 test("mock point inspection returns a concrete view and ancestor path", () => {

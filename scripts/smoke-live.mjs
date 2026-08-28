@@ -47,22 +47,40 @@ try {
   if (state.snapshot?.window?.captureScope !== "windowFrame") {
     throw new Error("Live target did not return the Window Frame capture scope");
   }
-  if (state.snapshot?.schemaVersion !== 4) {
+  if (state.snapshot?.schemaVersion !== 5) {
     throw new Error("Live target did not return the Window Frame schema version");
   }
-  if (state.snapshot?.window?.captureRendering !== "windowFrameHybrid") {
-    throw new Error("Live target did not return the hybrid AppKit Window Frame rendering");
+  if (state.snapshot?.window?.requestedCaptureMode !== "exact") {
+    throw new Error("Live target did not default to Exact capture");
   }
-  const exact = await client.callTool({
+  if (state.snapshot?.window?.captureRendering !== "windowServerExact") {
+    const reason = state.snapshot?.window?.captureFallbackReason ?? "no reason";
+    throw new Error(`Live target did not default to exact WindowServer rendering (${reason})`);
+  }
+  const hybrid = await client.callTool({
     name: "appkit_snapshot",
-    arguments: { scope: "windowFrame", mode: "exact" },
+    arguments: { scope: "windowFrame", mode: "hybrid" },
   });
-  if (exact.structuredContent?.snapshot?.window?.requestedCaptureMode !== "exact") {
-    throw new Error("Live target did not preserve the Exact Window request");
+  if (hybrid.structuredContent?.snapshot?.window?.requestedCaptureMode !== "hybrid") {
+    throw new Error("Live target did not preserve the explicit compatibility capture request");
   }
-  if (exact.structuredContent?.snapshot?.window?.captureRendering !== "windowServerExact") {
-    const reason = exact.structuredContent?.snapshot?.window?.captureFallbackReason ?? "no reason";
-    throw new Error(`Live target did not return Exact Window rendering (${reason})`);
+  if (hybrid.structuredContent?.snapshot?.window?.captureRendering !== "windowFrameHybrid") {
+    throw new Error("Live target did not preserve the explicit hybrid compatibility path");
+  }
+  const activeExact = await client.callTool({
+    name: "appkit_snapshot",
+    arguments: { scope: "windowFrame", mode: "exact", activation: "active" },
+  });
+  const activeExactWindow = activeExact.structuredContent?.snapshot?.window;
+  if (activeExactWindow?.requestedCaptureActivation !== "active") {
+    throw new Error("Live target did not preserve the Active Appearance request");
+  }
+  if (activeExactWindow?.capturedWindowWasActive !== true) {
+    throw new Error("Live target was not active while the true-appearance image was captured");
+  }
+  if (activeExactWindow?.captureRendering !== "windowServerExact") {
+    const reason = activeExactWindow?.captureFallbackReason ?? "no reason";
+    throw new Error(`Live target did not return Active Appearance rendering (${reason})`);
   }
   const views = [];
   const collect = (node) => {
@@ -92,8 +110,12 @@ try {
   if (content.structuredContent?.snapshot?.window?.captureScope !== "content") {
     throw new Error("Live target did not switch to the Content capture scope");
   }
-  if (content.structuredContent?.snapshot?.window?.captureRendering !== "viewCache") {
-    throw new Error("Content capture did not use the AppKit view cache");
+  if (content.structuredContent?.snapshot?.window?.requestedCaptureMode !== "exact") {
+    throw new Error("Content capture did not default to Exact capture");
+  }
+  if (content.structuredContent?.snapshot?.window?.captureRendering !== "windowServerExact") {
+    const reason = content.structuredContent?.snapshot?.window?.captureFallbackReason ?? "no reason";
+    throw new Error(`Content capture did not use the exact WindowServer crop (${reason})`);
   }
   const launchResponse = await fetch(opened.structuredContent.browserURL, {
     redirect: "manual",
@@ -104,7 +126,7 @@ try {
   }
   const browserOrigin = new URL(opened.structuredContent.browserURL).origin;
   const browserCookie = setCookie.split(";", 1)[0];
-  const browserSnapshot = await fetch(new URL("/api/snapshot?scope=windowFrame&mode=hybrid", browserOrigin), {
+  const browserSnapshot = await fetch(new URL("/api/snapshot?scope=windowFrame", browserOrigin), {
     headers: { Cookie: browserCookie },
   });
   if (!browserSnapshot.ok) {
@@ -119,13 +141,21 @@ try {
   if (!browserScript.ok || !browserScriptText.includes("native-comment-target")) {
     throw new Error("Browser app does not expose semantic Codex comment targets");
   }
+  if (!browserScriptText.includes("Active Appearance")) {
+    throw new Error("Browser app does not expose the Active Appearance control");
+  }
+  for (const retiredRenderingControl of ["data-capture-mode", "Active Window"]) {
+    if (browserScriptText.includes(retiredRenderingControl)) {
+      throw new Error(`Browser app still exposes a retired rendering control: ${retiredRenderingControl}`);
+    }
+  }
   for (const retired of ["wait_for_appkit_review", "save_appkit_review_batch", "open_appkit_inspector_window"]) {
     if (browserScriptText.includes(retired)) {
       throw new Error(`Browser app still contains retired fallback path: ${retired}`);
     }
   }
   process.stdout.write(
-    `Connected to ${target.name} (${target.pid}); verified Hybrid, Exact Window, Close Window selection, Content mode, and Codex Browser semantic comment targets.\n`,
+    `Connected to ${target.name} (${target.pid}); verified default Exact Window, explicit Hybrid compatibility, Active Appearance, exact Content crop, Close Window selection, and Codex Browser semantic comment targets.\n`,
   );
   if (process.env.APPKIT_INSPECTOR_PREPARE_BROWSER === "1") {
     const browser = await client.callTool({

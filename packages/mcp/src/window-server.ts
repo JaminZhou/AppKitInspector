@@ -5,8 +5,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   captureModeSchema,
+  captureActivationSchema,
   captureScopeSchema,
   type CaptureMode,
+  type CaptureActivation,
   type CaptureScope,
   type InspectResult,
   type Snapshot,
@@ -41,8 +43,18 @@ export type BrowserLaunch = {
 
 export type InspectorWindowBackend = {
   targetState(): Promise<InspectorTargetState>;
-  preview(scope?: CaptureScope, mode?: CaptureMode): Promise<InspectorWindowState>;
-  inspect(x: number, y: number, scope?: CaptureScope, mode?: CaptureMode): Promise<InspectorWindowState>;
+  preview(
+    scope?: CaptureScope,
+    mode?: CaptureMode,
+    activation?: CaptureActivation,
+  ): Promise<InspectorWindowState>;
+  inspect(
+    x: number,
+    y: number,
+    scope?: CaptureScope,
+    mode?: CaptureMode,
+    activation?: CaptureActivation,
+  ): Promise<InspectorWindowState>;
 };
 
 type Assets = { template: string; script: string };
@@ -91,7 +103,11 @@ function captureScope(value: unknown): CaptureScope {
 }
 
 function captureMode(value: unknown): CaptureMode {
-  return captureModeSchema.catch("hybrid").parse(value);
+  return captureModeSchema.catch("exact").parse(value);
+}
+
+function captureActivation(value: unknown): CaptureActivation {
+  return captureActivationSchema.catch("current").parse(value);
 }
 
 async function readJSON(request: IncomingMessage): Promise<Record<string, unknown>> {
@@ -254,6 +270,7 @@ export class InspectorWindowServer {
         await this.backend.preview(
           captureScope(url.searchParams.get("scope")),
           captureMode(url.searchParams.get("mode")),
+          captureActivation(url.searchParams.get("activation")),
         ),
       );
       return;
@@ -269,7 +286,13 @@ export class InspectorWindowServer {
       sendJSON(
         response,
         200,
-        await this.backend.inspect(x, y, captureScope(body.scope), captureMode(body.mode)),
+        await this.backend.inspect(
+          x,
+          y,
+          captureScope(body.scope),
+          captureMode(body.mode),
+          captureActivation(body.activation),
+        ),
       );
       return;
     }

@@ -64,6 +64,11 @@ public enum ProbeCaptureMode: String, Codable, Equatable, Sendable {
     case exact
 }
 
+public enum ProbeCaptureActivation: String, Codable, Equatable, Sendable {
+    case current
+    case active
+}
+
 public enum ProbeCaptureRendering: String, Codable, Equatable, Sendable {
     case viewCache
     case windowFrameHybrid
@@ -77,6 +82,8 @@ public struct ProbeWindow: Codable, Equatable, Sendable {
     public let contentFrame: ProbeRect
     public let captureScope: ProbeCaptureScope
     public let requestedCaptureMode: ProbeCaptureMode
+    public let requestedCaptureActivation: ProbeCaptureActivation
+    public let capturedWindowWasActive: Bool
     public let captureRendering: ProbeCaptureRendering
     public let captureFallbackReason: String?
 }

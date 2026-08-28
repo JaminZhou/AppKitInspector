@@ -18,11 +18,15 @@ Supported methods:
 
 - `snapshot`: capture the key window and recursively serialize its `NSView` tree. An optional
   `scope` is `windowFrame` by default or `content` for the application content view only. Optional
-  `mode` is `hybrid` by default or `exact` for current-process WindowServer pixels.
+  `mode` is `exact` by default or `hybrid` for the legacy compatibility renderer. Optional
+  `activation` is `current` by default or `active` to temporarily make the inspected window key.
 - `inspectPoint`: convert a normalized top-left image point to AppKit coordinates and return the
-  deepest hit-tested view plus its ancestor path. It accepts the same `scope` and `mode`.
+  deepest hit-tested view plus its ancestor path. It accepts the same `scope`, `mode`, and
+  `activation`.
 
-Schema version 4 adds `window.requestedCaptureMode`, `windowServerExact`, and an optional honest
+Schema version 5 adds `window.requestedCaptureActivation` and
+`window.capturedWindowWasActive`. Schema version 4 adds `window.requestedCaptureMode`,
+`windowServerExact`, and an optional honest
 `window.captureFallbackReason`. Schema version 3 includes `window.captureRendering`; version 2 adds
 `window.captureScope` and content-layout rectangle relative to the captured root. Schema version 1
 remains accepted as a content-only compatibility response, and schema version 2 remains accepted
@@ -76,16 +80,20 @@ native Browser comment targets merely because they carry a private identifier.
 
 ## Capture scope
 
-The probe captures entirely inside the inspected process with public Apple SDK APIs. Content uses
-`cacheDisplay(in:to:)` on `contentView`. Window mode keeps that live view-cache image for the content,
-uses `NSWindow.dataWithPDF(inside:)` for the frame region so modern hosted toolbar controls remain
-readable, and restores the real standard-window-button pixels from the view cache with circular
-clipping. Its `windowFrameHybrid` rendering is an inspection preview, not a pixel-exact replacement
-for WindowServer compositor effects such as glass and blur.
+The probe captures entirely inside the inspected process with public Apple SDK APIs. Window and
+Content both request the same exact current-process WindowServer image by default. Content maps the
+AppKit `contentView` into the frame-view coordinate space and crops that region from the exact image,
+so compositor materials, accent color, selection, and active/inactive appearance stay consistent.
 
 On macOS 14.4 or later, Exact uses `SCShareableContent.currentProcess`, matches the AppKit
 `windowNumber`, and asks `SCScreenshotManager` for a shadow-free single-window image. It captures the
 real compositor pixels for that inspected process only and does not request Screen Recording
-permission. If exact capture is unavailable, the response remains usable but reports
-`windowFrameHybrid` plus a `captureFallbackReason`. Both renderings exclude WindowServer shadows,
-other applications, and occlusion state.
+permission. If exact capture is unavailable, Window falls back to the public-AppKit Hybrid renderer;
+Content falls back to `cacheDisplay(in:to:)`. Both report a `captureFallbackReason`, and the Browser
+shows a `Compatibility Preview` badge rather than exposing rendering-mode controls. All renderings
+exclude WindowServer shadows, other applications, and occlusion state.
+
+Active Appearance capture uses public cooperative AppKit activation. The probe records the previous
+frontmost application, makes the inspected window key, waits until AppKit confirms the active
+state, captures the frame, and yields activation back. It never changes `isEmphasized` or paints a
+synthetic selection state. The focus handoff can be briefly visible and is never the default.

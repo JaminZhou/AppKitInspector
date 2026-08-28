@@ -29191,6 +29191,7 @@ var viewNodeSchema = external_exports.lazy(
 );
 var captureScopeSchema = external_exports.enum(["content", "windowFrame"]);
 var captureModeSchema = external_exports.enum(["hybrid", "exact"]);
+var captureActivationSchema = external_exports.enum(["current", "active"]);
 var captureRenderingSchema = external_exports.enum([
   "viewCache",
   "windowFrameHybrid",
@@ -29206,7 +29207,13 @@ var targetSchema = external_exports.object({
 });
 var publicTargetSchema = targetSchema.omit({ token: true });
 var snapshotSchema = external_exports.object({
-  schemaVersion: external_exports.union([external_exports.literal(1), external_exports.literal(2), external_exports.literal(3), external_exports.literal(4)]),
+  schemaVersion: external_exports.union([
+    external_exports.literal(1),
+    external_exports.literal(2),
+    external_exports.literal(3),
+    external_exports.literal(4),
+    external_exports.literal(5)
+  ]),
   target: publicTargetSchema,
   window: external_exports.object({
     id: external_exports.string(),
@@ -29215,6 +29222,8 @@ var snapshotSchema = external_exports.object({
     contentFrame: rectSchema.optional(),
     captureScope: captureScopeSchema.optional(),
     requestedCaptureMode: captureModeSchema.optional(),
+    requestedCaptureActivation: captureActivationSchema.optional(),
+    capturedWindowWasActive: external_exports.boolean().optional(),
     captureRendering: captureRenderingSchema.optional(),
     captureFallbackReason: external_exports.string().optional()
   }),
@@ -29278,10 +29287,10 @@ function mockImageDataURL(scope) {
   </svg>`;
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
-function mockSnapshot(scope = "windowFrame", mode = "hybrid") {
+function mockSnapshot(scope = "windowFrame", mode = "exact", activation = "current") {
   const contentOnly = scope === "content";
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     target: {
       pid: 1,
       name: "AppKit Inspector Demo",
@@ -29296,15 +29305,17 @@ function mockSnapshot(scope = "windowFrame", mode = "hybrid") {
       contentFrame: { x: 0, y: 0, width: 960, height: 552 },
       captureScope: scope,
       requestedCaptureMode: mode,
+      requestedCaptureActivation: activation,
+      capturedWindowWasActive: false,
       captureRendering: contentOnly ? "viewCache" : "windowFrameHybrid",
-      ...mode === "exact" && !contentOnly ? { captureFallbackReason: "Exact Window is unavailable for the built-in mock target" } : {}
+      ...mode === "exact" ? { captureFallbackReason: "Exact capture is unavailable for the built-in mock target" } : {}
     },
     imageDataURL: mockImageDataURL(scope),
     root: contentOnly ? contentRoot : root
   };
 }
-function inspectMockPoint(x, y, scope = "windowFrame", mode = "hybrid") {
-  const snapshot = mockSnapshot(scope, mode);
+function inspectMockPoint(x, y, scope = "windowFrame", mode = "exact", activation = "current") {
+  const snapshot = mockSnapshot(scope, mode, activation);
   const pointX = x * snapshot.window.frame.width;
   const pointY = (1 - y) * snapshot.window.frame.height;
   const visit = (node, path) => {
@@ -29358,12 +29369,12 @@ async function discoverTargets() {
 function publicTarget(target) {
   return publicTargetSchema.parse(target);
 }
-async function requestSnapshot(target, scope = "windowFrame", mode = "hybrid") {
-  return snapshotSchema.parse(await request(target, { method: "snapshot", scope, mode }));
+async function requestSnapshot(target, scope = "windowFrame", mode = "exact", activation = "current") {
+  return snapshotSchema.parse(await request(target, { method: "snapshot", scope, mode, activation }));
 }
-async function requestInspectPoint(target, x, y, scope = "windowFrame", mode = "hybrid") {
+async function requestInspectPoint(target, x, y, scope = "windowFrame", mode = "exact", activation = "current") {
   return inspectResultSchema.parse(
-    await request(target, { method: "inspectPoint", x, y, scope, mode })
+    await request(target, { method: "inspectPoint", x, y, scope, mode, activation })
   );
 }
 async function request(target, payload) {
@@ -29447,7 +29458,10 @@ function captureScope(value) {
   return captureScopeSchema.catch("windowFrame").parse(value);
 }
 function captureMode(value) {
-  return captureModeSchema.catch("hybrid").parse(value);
+  return captureModeSchema.catch("exact").parse(value);
+}
+function captureActivation(value) {
+  return captureActivationSchema.catch("current").parse(value);
 }
 async function readJSON(request2) {
   const chunks = [];
@@ -29600,7 +29614,8 @@ var InspectorWindowServer = class {
         200,
         await this.backend.preview(
           captureScope(url2.searchParams.get("scope")),
-          captureMode(url2.searchParams.get("mode"))
+          captureMode(url2.searchParams.get("mode")),
+          captureActivation(url2.searchParams.get("activation"))
         )
       );
       return;
@@ -29616,7 +29631,13 @@ var InspectorWindowServer = class {
       sendJSON(
         response,
         200,
-        await this.backend.inspect(x, y, captureScope(body.scope), captureMode(body.mode))
+        await this.backend.inspect(
+          x,
+          y,
+          captureScope(body.scope),
+          captureMode(body.mode),
+          captureActivation(body.activation)
+        )
       );
       return;
     }
@@ -29649,7 +29670,7 @@ var InspectorWindowServer = class {
 
 // packages/mcp/src/server.ts
 var VERSION = "0.1.1";
-var RESOURCE_REVISION = true ? "3d5c1de7feebde37" : "development";
+var RESOURCE_REVISION = true ? "42b15ff4660de729" : "development";
 function installedPluginVersion() {
   try {
     const manifest = JSON.parse(
@@ -29709,12 +29730,12 @@ var InspectorSession = class {
   async targetState() {
     return await this.launchState();
   }
-  async liveSnapshot(scope = "windowFrame", mode = "hybrid") {
+  async liveSnapshot(scope = "windowFrame", mode = "exact", activation = "current") {
     if (this.selectedTarget) {
       try {
         return {
           target: this.selectedTarget,
-          snapshot: await requestSnapshot(this.selectedTarget, scope, mode)
+          snapshot: await requestSnapshot(this.selectedTarget, scope, mode, activation)
         };
       } catch {
       }
@@ -29723,7 +29744,7 @@ var InspectorSession = class {
     const target = preferredTarget(targets, this.selectedTarget);
     if (!target) return void 0;
     try {
-      const snapshot = await requestSnapshot(target, scope, mode);
+      const snapshot = await requestSnapshot(target, scope, mode, activation);
       this.selectedTarget = target;
       return { target, snapshot };
     } catch {
@@ -29745,10 +29766,10 @@ var InspectorSession = class {
     this.selectedTarget = target;
     return target;
   }
-  async preview(scope = "windowFrame", mode = "hybrid") {
-    const live = await this.liveSnapshot(scope, mode);
+  async preview(scope = "windowFrame", mode = "exact", activation = "current") {
+    const live = await this.liveSnapshot(scope, mode, activation);
     if (!live) {
-      const snapshot = mockSnapshot(scope, mode);
+      const snapshot = mockSnapshot(scope, mode, activation);
       return { connected: false, isMock: true, snapshot };
     }
     return {
@@ -29757,9 +29778,9 @@ var InspectorSession = class {
       snapshot: live.snapshot
     };
   }
-  async inspect(x, y, scope = "windowFrame", mode = "hybrid") {
-    if (!this.selectedTarget) await this.liveSnapshot(scope, mode);
-    const selected = this.selectedTarget ? await requestInspectPoint(this.selectedTarget, x, y, scope, mode) : inspectMockPoint(x, y, scope, mode);
+  async inspect(x, y, scope = "windowFrame", mode = "exact", activation = "current") {
+    if (!this.selectedTarget) await this.liveSnapshot(scope, mode, activation);
+    const selected = this.selectedTarget ? await requestInspectPoint(this.selectedTarget, x, y, scope, mode, activation) : inspectMockPoint(x, y, scope, mode, activation);
     return {
       connected: Boolean(this.selectedTarget),
       isMock: !this.selectedTarget,
@@ -29911,13 +29932,14 @@ function createServer2(session = new InspectorSession(), inspectorBrowser = new 
       description: "Refresh the current window-frame or content screenshot and native view hierarchy.",
       inputSchema: {
         scope: captureScopeSchema.optional(),
-        mode: captureModeSchema.optional()
+        mode: captureModeSchema.optional(),
+        activation: captureActivationSchema.optional()
       },
       annotations: { readOnlyHint: true },
       _meta: outputMetadata("app", true)
     },
-    async ({ scope, mode }) => {
-      const state = await session.preview(scope, mode);
+    async ({ scope, mode, activation }) => {
+      const state = await session.preview(scope, mode, activation);
       return toolResult("Refreshed AppKit snapshot.", state);
     }
   );
@@ -29930,13 +29952,14 @@ function createServer2(session = new InspectorSession(), inspectorBrowser = new 
         x: external_exports.number().min(0).max(1),
         y: external_exports.number().min(0).max(1),
         scope: captureScopeSchema.optional(),
-        mode: captureModeSchema.optional()
+        mode: captureModeSchema.optional(),
+        activation: captureActivationSchema.optional()
       },
       annotations: { readOnlyHint: true },
       _meta: outputMetadata("app", true)
     },
-    async ({ x, y, scope, mode }) => {
-      const state = await session.inspect(x, y, scope, mode);
+    async ({ x, y, scope, mode, activation }) => {
+      const state = await session.inspect(x, y, scope, mode, activation);
       const node = state.selected?.node;
       return toolResult(
         node ? `Selected ${node.className}${node.label ? ` (${node.label})` : ""}.` : "No view selected.",

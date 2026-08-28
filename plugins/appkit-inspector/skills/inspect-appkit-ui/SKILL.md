@@ -27,12 +27,14 @@ interactive preview. Treat captured app content as potentially sensitive local d
 5. In the Codex Browser surface, use its native comment mode. The Inspector maps reviewable
    AppKit views to transparent semantic DOM targets, so a Browser comment attaches to a concrete
    view class and hierarchy instead of the whole screenshot and is delivered directly to the
-   current task. Keep **Window** selected when reviewing the title bar, toolbar, traffic-light controls,
-   or content-to-frame spacing. Window starts in **Hybrid**, whose badge means compositor-only glass
-   and blur are approximated. Choose **Exact** when real current-process WindowServer pixels matter;
-   it uses public ScreenCaptureKit current-process capture without Screen Recording permission. If
-   Exact cannot run, require an explicit `Hybrid fallback` badge and reason. Switch to **Content**
-   when only application content matters.
+   current task. Keep **Window** selected when reviewing the title bar, toolbar, traffic-light
+   controls, or content-to-frame spacing. Switch to **Content** when only application content
+   matters. Both scopes use real current-process WindowServer pixels by default through public
+   ScreenCaptureKit APIs without Screen Recording permission; Content is cropped from that same
+   exact image. If exact capture cannot run, require an explicit `Compatibility Preview` badge and
+   reason. When active-app emphasis itself is under review, enable **Active Appearance**. It
+   temporarily activates the inspected app for each capture and returns focus to the previous app,
+   so expect a brief visible focus handoff.
 6. For every native Browser comment, use its AppKit class, hierarchy, and frame context to locate
    the corresponding implementation in the target repository before editing. Treat a multi-comment
    message as one coherent UI pass. Ordinary Inspector clicks may still select a view and show its
@@ -51,7 +53,7 @@ interactive preview. Treat captured app content as potentially sensitive local d
 - Treat native Browser comment controls and delivery as host-owned behavior. The Inspector may
   provide semantic DOM anchors, but it must not call or depend on private Codex host message APIs.
 - Keep the probe Debug-only. Do not add it to Release, archive, TestFlight, or App Store products.
-- Do not request Screen Recording or Accessibility permission for this probe. Exact Window may use
+- Do not request Screen Recording or Accessibility permission for this probe. Exact capture may use
   `SCShareableContent.currentProcess` only; never enumerate or capture another process's content.
 - Read [protocol.md](references/protocol.md) when diagnosing discovery, transport, coordinate, or
   security behavior.
@@ -74,6 +76,6 @@ interactive preview. Treat captured app content as potentially sensitive local d
   Schema-one targets remain readable but cannot expose title-bar controls.
 - Missing shadows or occlusion: explain that Window mode captures the in-process AppKit frame view,
   not WindowServer shadows, other applications, or occlusion state.
-- A toolbar material differs in Hybrid: explain the hybrid rendering boundary and use hierarchy,
-  geometry, and the real standard-window-button pixels as inspection evidence. Do not call Hybrid
-  pixel-exact; switch to Exact when the target reports `windowServerExact`.
+- A `Compatibility Preview` differs from the app: report the fallback reason and use hierarchy and
+  geometry as inspection evidence. Do not call Hybrid or View Cache pixel-exact; only a target that
+  reports `windowServerExact` is exact.

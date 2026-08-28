@@ -38,6 +38,7 @@ private struct ProbeRequest: Decodable {
     let y: Double?
     let scope: ProbeCaptureScope?
     let mode: ProbeCaptureMode?
+    let activation: ProbeCaptureActivation?
 }
 
 private struct SuccessResponse<Value: Encodable>: Encodable {
@@ -169,7 +170,8 @@ private final class ProbeServer: @unchecked Sendable {
                                 result: try await ViewSnapshotter.snapshot(
                                     target: target,
                                     scope: request.scope ?? .windowFrame,
-                                    mode: request.mode ?? .hybrid
+                                    mode: request.mode ?? .exact,
+                                    activation: request.activation ?? .current
                                 )
                             )
                         )
@@ -182,7 +184,8 @@ private final class ProbeServer: @unchecked Sendable {
                                     y: y,
                                     target: target,
                                     scope: request.scope ?? .windowFrame,
-                                    mode: request.mode ?? .hybrid
+                                    mode: request.mode ?? .exact,
+                                    activation: request.activation ?? .current
                                 )
                             )
                         )

@@ -7,6 +7,7 @@ enum ViewSnapshotter {
     private struct CaptureContext {
         let window: NSWindow
         let contentView: NSView
+        let frameView: NSView
         let rootView: NSView
         let scope: ProbeCaptureScope
     }
@@ -14,9 +15,26 @@ enum ViewSnapshotter {
     static func snapshot(
         target: ProbeTarget,
         scope: ProbeCaptureScope = .windowFrame,
-        mode: ProbeCaptureMode = .hybrid
+        mode: ProbeCaptureMode = .exact,
+        activation: ProbeCaptureActivation = .current
     ) async throws -> ProbeSnapshot {
         let context = try captureContext(scope: scope)
+        return try await withCaptureActivation(activation, context: context) {
+            try await makeSnapshot(
+                target: target,
+                context: context,
+                mode: mode,
+                activation: activation
+            )
+        }
+    }
+
+    private static func makeSnapshot(
+        target: ProbeTarget,
+        context: CaptureContext,
+        mode: ProbeCaptureMode,
+        activation: ProbeCaptureActivation
+    ) async throws -> ProbeSnapshot {
         let rootView = context.rootView
         rootView.displayIfNeeded()
         guard let bitmap = rootView.bitmapImageRepForCachingDisplay(in: rootView.bounds) else {
@@ -27,7 +45,7 @@ enum ViewSnapshotter {
         let capture = try await capturePNG(context: context, bitmap: bitmap, mode: mode)
 
         return ProbeSnapshot(
-            schemaVersion: 4,
+            schemaVersion: 5,
             target: target,
             window: ProbeWindow(
                 id: objectID(context.window),
@@ -36,6 +54,8 @@ enum ViewSnapshotter {
                 contentFrame: ProbeRect(contentLayoutFrame(context: context)),
                 captureScope: context.scope,
                 requestedCaptureMode: mode,
+                requestedCaptureActivation: activation,
+                capturedWindowWasActive: NSApp.isActive && context.window.isKeyWindow,
                 captureRendering: capture.rendering,
                 captureFallbackReason: capture.fallbackReason
             ),
@@ -49,27 +69,120 @@ enum ViewSnapshotter {
         y: Double,
         target: ProbeTarget,
         scope: ProbeCaptureScope = .windowFrame,
-        mode: ProbeCaptureMode = .hybrid
+        mode: ProbeCaptureMode = .exact,
+        activation: ProbeCaptureActivation = .current
     ) async throws -> ProbeInspectResult {
         let context = try captureContext(scope: scope)
-        let rootView = context.rootView
-        let point = CGPoint(
-            x: rootView.bounds.width * min(max(x, 0), 1),
-            y: rootView.bounds.height * (1 - min(max(y, 0), 1))
-        )
-        let hitView = rootView.hitTest(point) ?? rootView
-        var ancestors: [String] = []
-        var cursor: NSView? = hitView
-        while let view = cursor {
-            ancestors.append(NSStringFromClass(type(of: view)))
-            if view === rootView { break }
-            cursor = view.superview
+        return try await withCaptureActivation(activation, context: context) {
+            let rootView = context.rootView
+            let point = CGPoint(
+                x: rootView.bounds.width * min(max(x, 0), 1),
+                y: rootView.bounds.height * (1 - min(max(y, 0), 1))
+            )
+            let hitView = rootView.hitTest(point) ?? rootView
+            var ancestors: [String] = []
+            var cursor: NSView? = hitView
+            while let view = cursor {
+                ancestors.append(NSStringFromClass(type(of: view)))
+                if view === rootView { break }
+                cursor = view.superview
+            }
+            return ProbeInspectResult(
+                snapshot: try await makeSnapshot(
+                    target: target,
+                    context: context,
+                    mode: mode,
+                    activation: activation
+                ),
+                node: viewNode(hitView, relativeTo: rootView, window: context.window),
+                ancestorPath: ancestors.reversed()
+            )
         }
-        return ProbeInspectResult(
-            snapshot: try await snapshot(target: target, scope: context.scope, mode: mode),
-            node: viewNode(hitView, relativeTo: rootView, window: context.window),
-            ancestorPath: ancestors.reversed()
-        )
+    }
+
+    private static func withCaptureActivation<Value>(
+        _ activation: ProbeCaptureActivation,
+        context: CaptureContext,
+        operation: () async throws -> Value
+    ) async throws -> Value {
+        guard activation == .active else {
+            return try await operation()
+        }
+
+        let applicationWasActive = NSApp.isActive
+        let previousFrontmostApplication = NSWorkspace.shared.frontmostApplication
+        let previousKeyWindow = NSApp.keyWindow
+        let windowWasKey = context.window.isKeyWindow
+
+        if !applicationWasActive || !windowWasKey {
+            context.window.makeKeyAndOrderFront(nil)
+            if let previousFrontmostApplication,
+               previousFrontmostApplication.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+                _ = NSRunningApplication.current.activate(
+                    from: previousFrontmostApplication,
+                    options: []
+                )
+            } else {
+                NSApp.activate()
+            }
+
+            guard await waitForActiveWindow(context.window) else {
+                restoreActivation(
+                    applicationWasActive: applicationWasActive,
+                    previousFrontmostApplication: previousFrontmostApplication,
+                    previousKeyWindow: previousKeyWindow,
+                    windowWasKey: windowWasKey
+                )
+                throw ProbeError.activeCaptureUnavailable
+            }
+            context.window.displayIfNeeded()
+            await Task.yield()
+        }
+
+        do {
+            let value = try await operation()
+            restoreActivation(
+                applicationWasActive: applicationWasActive,
+                previousFrontmostApplication: previousFrontmostApplication,
+                previousKeyWindow: previousKeyWindow,
+                windowWasKey: windowWasKey
+            )
+            return value
+        } catch {
+            restoreActivation(
+                applicationWasActive: applicationWasActive,
+                previousFrontmostApplication: previousFrontmostApplication,
+                previousKeyWindow: previousKeyWindow,
+                windowWasKey: windowWasKey
+            )
+            throw error
+        }
+    }
+
+    private static func waitForActiveWindow(_ window: NSWindow) async -> Bool {
+        for _ in 0..<60 {
+            if NSApp.isActive && window.isKeyWindow { return true }
+            try? await Task.sleep(for: .milliseconds(16))
+        }
+        return NSApp.isActive && window.isKeyWindow
+    }
+
+    private static func restoreActivation(
+        applicationWasActive: Bool,
+        previousFrontmostApplication: NSRunningApplication?,
+        previousKeyWindow: NSWindow?,
+        windowWasKey: Bool
+    ) {
+        if applicationWasActive {
+            if !windowWasKey, let previousKeyWindow {
+                previousKeyWindow.makeKey()
+            }
+            return
+        }
+        guard let previousFrontmostApplication,
+              previousFrontmostApplication.processIdentifier != ProcessInfo.processInfo.processIdentifier
+        else { return }
+        NSApp.yieldActivation(to: previousFrontmostApplication)
     }
 
     static func viewNode(_ view: NSView, relativeTo rootView: NSView, window: NSWindow) -> ProbeViewNode {
@@ -134,10 +247,13 @@ enum ViewSnapshotter {
         else {
             throw ProbeError.noVisibleWindow
         }
+        let frameView = contentView.superview ?? contentView
         let rootView: NSView
         let actualScope: ProbeCaptureScope
-        if scope == .windowFrame, let frameView = contentView.superview, frameView.window === window {
-            rootView = frameView
+        if scope == .windowFrame,
+           let windowFrameView = contentView.superview,
+           windowFrameView.window === window {
+            rootView = windowFrameView
             actualScope = .windowFrame
         } else {
             rootView = contentView
@@ -146,6 +262,7 @@ enum ViewSnapshotter {
         return CaptureContext(
             window: window,
             contentView: contentView,
+            frameView: frameView,
             rootView: rootView,
             scope: actualScope
         )
@@ -167,24 +284,28 @@ enum ViewSnapshotter {
         bitmap: NSBitmapImageRep,
         mode: ProbeCaptureMode
     ) async throws -> CaptureResult {
-        if context.scope == .windowFrame, mode == .exact {
+        if mode == .exact {
             do {
-                let png = try await exactWindowFramePNG(context: context)
+                let png = try await exactPNG(context: context)
                 return CaptureResult(
                     png: png,
                     rendering: .windowServerExact,
                     fallbackReason: nil
                 )
             } catch {
-                guard let png = hybridWindowFramePNG(context: context, cachedBitmap: bitmap) else {
+                let reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                if context.scope == .windowFrame,
+                   let png = hybridWindowFramePNG(context: context, cachedBitmap: bitmap) {
+                    return CaptureResult(
+                        png: png,
+                        rendering: .windowFrameHybrid,
+                        fallbackReason: reason
+                    )
+                }
+                guard let png = bitmap.representation(using: .png, properties: [:]) else {
                     throw error
                 }
-                let reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                return CaptureResult(
-                    png: png,
-                    rendering: .windowFrameHybrid,
-                    fallbackReason: reason
-                )
+                return CaptureResult(png: png, rendering: .viewCache, fallbackReason: reason)
             }
         }
         if context.scope == .windowFrame,
@@ -201,7 +322,7 @@ enum ViewSnapshotter {
         return CaptureResult(png: png, rendering: .viewCache, fallbackReason: nil)
     }
 
-    private static func exactWindowFramePNG(context: CaptureContext) async throws -> Data {
+    private static func exactPNG(context: CaptureContext) async throws -> Data {
         guard #available(macOS 14.4, *) else {
             throw ProbeError.exactCaptureUnavailable("Exact Window requires macOS 14.4 or later")
         }
@@ -214,8 +335,8 @@ enum ViewSnapshotter {
 
         let configuration = SCStreamConfiguration()
         let scale = max(1, context.window.backingScaleFactor)
-        configuration.width = max(1, Int((context.rootView.bounds.width * scale).rounded()))
-        configuration.height = max(1, Int((context.rootView.bounds.height * scale).rounded()))
+        configuration.width = max(1, Int((context.frameView.bounds.width * scale).rounded()))
+        configuration.height = max(1, Int((context.frameView.bounds.height * scale).rounded()))
         configuration.scalesToFit = true
         configuration.preservesAspectRatio = true
         configuration.showsCursor = false
@@ -223,12 +344,53 @@ enum ViewSnapshotter {
         configuration.captureResolution = .best
 
         let filter = SCContentFilter(desktopIndependentWindow: capturedWindow)
-        let image = try await captureImage(filter: filter, configuration: configuration)
+        let windowImage = try await captureImage(filter: filter, configuration: configuration)
+        let image: CGImage
+        if context.scope == .content {
+            let contentFrame = context.contentView.convert(context.contentView.bounds, to: context.frameView)
+            let cropRect = exactContentCropRect(
+                frameBounds: context.frameView.bounds,
+                contentFrame: contentFrame,
+                imageSize: CGSize(width: windowImage.width, height: windowImage.height)
+            )
+            guard cropRect.width > 0,
+                  cropRect.height > 0,
+                  let croppedImage = windowImage.cropping(to: cropRect)
+            else {
+                throw ProbeError.exactCaptureUnavailable("The application content could not be cropped from the exact window image")
+            }
+            image = croppedImage
+        } else {
+            image = windowImage
+        }
         let bitmap = NSBitmapImageRep(cgImage: image)
         guard let png = bitmap.representation(using: .png, properties: [:]) else {
             throw ProbeError.captureFailed
         }
         return png
+    }
+
+    static func exactContentCropRect(
+        frameBounds: NSRect,
+        contentFrame: NSRect,
+        imageSize: CGSize
+    ) -> CGRect {
+        guard frameBounds.width > 0,
+              frameBounds.height > 0,
+              imageSize.width > 0,
+              imageSize.height > 0
+        else { return .zero }
+
+        let scaleX = imageSize.width / frameBounds.width
+        let scaleY = imageSize.height / frameBounds.height
+        let proposed = CGRect(
+            x: (contentFrame.minX - frameBounds.minX) * scaleX,
+            y: (frameBounds.maxY - contentFrame.maxY) * scaleY,
+            width: contentFrame.width * scaleX,
+            height: contentFrame.height * scaleY
+        ).integral
+        let imageBounds = CGRect(origin: .zero, size: imageSize)
+        return proposed.intersection(imageBounds)
     }
 
     @available(macOS 14.4, *)
@@ -408,6 +570,7 @@ enum ProbeError: LocalizedError {
     case noVisibleWindow
     case captureFailed
     case exactCaptureUnavailable(String)
+    case activeCaptureUnavailable
     case socket(String)
     case invalidRequest
     case unauthorized
@@ -417,6 +580,7 @@ enum ProbeError: LocalizedError {
         case .noVisibleWindow: "No visible AppKit window is available"
         case .captureFailed: "Unable to capture the AppKit window"
         case let .exactCaptureUnavailable(message): message
+        case .activeCaptureUnavailable: "The inspected window did not become active before capture"
         case let .socket(message): message
         case .invalidRequest: "Invalid probe request"
         case .unauthorized: "Probe request token is invalid"
