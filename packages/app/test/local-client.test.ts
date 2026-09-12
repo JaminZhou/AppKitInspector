@@ -57,7 +57,7 @@ test("local client authenticates API requests without putting the token in the U
     "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
     request,
   );
-  await client.inspect(0.25, 0.75, "windowFrame", "exact");
+  await client.inspect(0.25, 0.75, "windowFrame", "exact", "current", "popover-1");
   assert.equal(requests[0]?.url, "http://127.0.0.1:43123/api/inspect");
   assert.equal(
     (requests[0]?.init?.headers as Record<string, string> | undefined)?.Authorization,
@@ -71,6 +71,7 @@ test("local client authenticates API requests without putting the token in the U
       scope: "windowFrame",
       mode: "exact",
       activation: "current",
+      windowID: "popover-1",
     }),
   );
   assert.equal(requests[0]?.init?.credentials, "omit");
@@ -87,6 +88,7 @@ test("local client uses same-origin cookies when no Bearer token is present", as
   };
   const client = new LocalInspectorClient("http://127.0.0.1:43123", undefined, request);
   await client.target();
+  await client.windows();
   await client.snapshot("content", "hybrid");
   assert.equal(
     requests[0]?.url,
@@ -94,6 +96,10 @@ test("local client uses same-origin cookies when no Bearer token is present", as
   );
   assert.equal(
     requests[1]?.url,
+    "http://127.0.0.1:43123/api/windows",
+  );
+  assert.equal(
+    requests[2]?.url,
     "http://127.0.0.1:43123/api/snapshot?scope=content&mode=hybrid&activation=current",
   );
   assert.equal(requests[0]?.init?.credentials, "same-origin");

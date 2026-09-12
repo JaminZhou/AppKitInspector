@@ -6,6 +6,7 @@ import {
   inspectResultSchema,
   publicTargetSchema,
   snapshotSchema,
+  windowListSchema,
   targetSchema,
   type InspectResult,
   type CaptureActivation,
@@ -14,6 +15,7 @@ import {
   type PublicTarget,
   type Snapshot,
   type Target,
+  type WindowList,
 } from "./contracts.js";
 
 const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
@@ -59,8 +61,19 @@ export async function requestSnapshot(
   scope: CaptureScope = "windowFrame",
   mode: CaptureMode = "exact",
   activation: CaptureActivation = "current",
+  windowID?: string,
 ): Promise<Snapshot> {
-  return snapshotSchema.parse(await request(target, { method: "snapshot", scope, mode, activation }));
+  return snapshotSchema.parse(await request(target, {
+    method: "snapshot",
+    scope,
+    mode,
+    activation,
+    ...(windowID ? { windowID } : {}),
+  }));
+}
+
+export async function requestWindows(target: Target): Promise<WindowList> {
+  return windowListSchema.parse(await request(target, { method: "windows" }));
 }
 
 export async function requestInspectPoint(
@@ -70,9 +83,18 @@ export async function requestInspectPoint(
   scope: CaptureScope = "windowFrame",
   mode: CaptureMode = "exact",
   activation: CaptureActivation = "current",
+  windowID?: string,
 ): Promise<InspectResult> {
   return inspectResultSchema.parse(
-    await request(target, { method: "inspectPoint", x, y, scope, mode, activation }),
+    await request(target, {
+      method: "inspectPoint",
+      x,
+      y,
+      scope,
+      mode,
+      activation,
+      ...(windowID ? { windowID } : {}),
+    }),
   );
 }
 

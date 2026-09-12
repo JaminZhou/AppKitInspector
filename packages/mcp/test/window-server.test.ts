@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectMockPoint, mockSnapshot } from "../src/mock.js";
+import { inspectMockPoint, mockSnapshot, mockWindowList } from "../src/mock.js";
 import type { CaptureActivation, CaptureMode, CaptureScope } from "../src/contracts.js";
 import { InspectorWindowServer } from "../src/window-server.js";
 
@@ -12,6 +12,9 @@ test("standalone inspector supports fragment Bearer and single-use Browser sessi
     {
       async targetState() {
         return { connected: false };
+      },
+      async windows() {
+        return { connected: false, isMock: true, windowList: mockWindowList() };
       },
       async preview(scope = "windowFrame", mode = "exact", activation = "current") {
         scopes.push(scope);
@@ -53,6 +56,8 @@ test("standalone inspector supports fragment Bearer and single-use Browser sessi
     assert.equal(unauthorized.status, 401);
     const unauthorizedTarget = await fetch(`${windowURL.origin}/api/target`);
     assert.equal(unauthorizedTarget.status, 401);
+    const unauthorizedWindows = await fetch(`${windowURL.origin}/api/windows`);
+    assert.equal(unauthorizedWindows.status, 401);
 
     const browserLaunch = new URL((await server.createBrowserLaunch()).url);
     assert.equal(browserLaunch.origin, windowURL.origin);
@@ -82,6 +87,9 @@ test("standalone inspector supports fragment Bearer and single-use Browser sessi
     const target = await fetch(`${windowURL.origin}/api/target`, { headers: authorization });
     assert.equal(target.status, 200);
     assert.deepEqual(await target.json(), { connected: false });
+    const windows = await fetch(`${windowURL.origin}/api/windows`, { headers: authorization });
+    assert.equal(windows.status, 200);
+    assert.equal((await windows.json()).windowList.preferredWindowID, "window-main");
     const snapshot = await fetch(`${windowURL.origin}/api/snapshot`, { headers: authorization });
     assert.equal(snapshot.status, 200);
     const defaultSnapshot = await snapshot.json();

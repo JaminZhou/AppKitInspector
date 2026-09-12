@@ -22,10 +22,15 @@ for a coding task.
 - Choose **Active Appearance** to temporarily make the inspected window key for each
   capture, record its real emphasized AppKit state, and cooperatively return focus to the previous
   application. This is explicit because macOS cannot keep two applications active simultaneously.
+- Target and window monitoring always uses the current inactive appearance; returning to an
+  Inspector tab never activates the inspected application in the background.
 - If exact capture is unavailable, automatically keep the Inspector usable with an honestly labeled
   compatibility preview and the failure reason. The legacy Hybrid/View Cache paths are fallback
   implementation details rather than normal UI choices.
 - Click the captured interface and identify the deepest native `NSView`.
+- Follow transient AppKit windows such as `NSPopover`, sheets, and panels automatically. The
+  Inspector captures a newly appeared transient window while it is live, preserves the last
+  snapshot after it closes, and offers a window picker for switching back to the main window.
 - Select and comment individual `NSTableHeaderCell` regions even though AppKit draws column headers
   as cells rather than independent views.
 - Review class names, frames, accessibility metadata, and ancestor paths.
@@ -77,6 +82,8 @@ Both scopes use the current process's real WindowServer pixels by default; Conte
 capture to the application content view. If the OS cannot provide exact pixels, the Inspector shows
 an honest compatibility-preview badge and reason. Enable **Active Appearance** when selection,
 focus, or toolbar emphasis must match the inspected app's foreground appearance.
+Leave the window picker on **Automatic** to follow a newly opened popover, sheet, or panel, or
+choose a specific visible window to keep inspection pinned there.
 In Codex Browser, use its native comment mode. AppKit Inspector exposes each reviewable native view
 as a semantic comment target, so comments reach the current task with the specific AppKit class and
 hierarchy instead of targeting the whole screenshot. Multiple native comments can be submitted as

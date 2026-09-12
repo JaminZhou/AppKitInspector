@@ -24,6 +24,9 @@ interactive preview. Treat captured app content as potentially sensitive local d
    DOM or screenshot check, then stop. Do not continue collecting duplicate render evidence after
    the surface is usable. `prepare_appkit_inspector_browser` remains a compatibility alias for the
    same Browser launch.
+   The window picker defaults to **Automatic**: a newly visible popover, sheet, or panel is captured
+   ahead of the main window. If a transient window closes, its final snapshot remains available for
+   semantic comments; use the picker or Refresh to return to a live window.
 5. In the Codex Browser surface, use its native comment mode. The Inspector maps reviewable
    AppKit views to transparent semantic DOM targets, so a Browser comment attaches to a concrete
    view class and hierarchy instead of the whole screenshot and is delivered directly to the
@@ -35,6 +38,8 @@ interactive preview. Treat captured app content as potentially sensitive local d
    reason. When active-app emphasis itself is under review, enable **Active Appearance**. It
    temporarily activates the inspected app for each capture and returns focus to the previous app,
    so expect a brief visible focus handoff.
+   Automatic target and window monitoring never activates the inspected app; an explicit Active
+   Appearance capture is required for a focus handoff.
 6. For every native Browser comment, use its AppKit class, hierarchy, and frame context to locate
    the corresponding implementation in the target repository before editing. Treat a multi-comment
    message as one coherent UI pass. Ordinary Inspector clicks may still select a view and show its
@@ -63,6 +68,9 @@ interactive preview. Treat captured app content as potentially sensitive local d
 - No target: ask the user to run a Debug build with the probe started; the mock remains available.
 - Stale target: list targets again, then reconnect to the new PID.
 - Point mismatch: refresh before retrying because window geometry may have changed.
+- Closed transient window: semantic Browser comments and hierarchy selection remain available on
+  the retained snapshot, but live point inspection is disabled. Reopen the transient window for a
+  new exact capture or choose a live window from the picker.
 - Codex Browser fails: request a fresh single-use link; never reuse an expired `browserURL`. If the
   Browser panel cannot open it, report the Browser-layer error. There is no clipboard, review-queue,
   or system-browser fallback.

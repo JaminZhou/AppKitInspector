@@ -52,6 +52,59 @@ final class ProbeModelsTests: XCTestCase {
         }
     }
 
+    func testWindowKindsRoundTrip() throws {
+        for kind in [
+            ProbeWindowKind.main,
+            .popover,
+            .sheet,
+            .panel,
+            .window,
+        ] {
+            let data = try JSONEncoder().encode(kind)
+            XCTAssertEqual(try JSONDecoder().decode(ProbeWindowKind.self, from: data), kind)
+        }
+    }
+
+    @MainActor
+    func testTransientWindowsArePreferredForAutomaticInspection() {
+        let frame = ProbeRect(x: 0, y: 0, width: 320, height: 200)
+        let main = ProbeWindowOption(
+            id: "main",
+            title: "Main Window",
+            className: "NSWindow",
+            kind: .main,
+            frame: frame,
+            isKeyWindow: true,
+            isMainWindow: true
+        )
+        let popover = ProbeWindowOption(
+            id: "popover",
+            title: "Popover",
+            className: "_NSPopoverWindow",
+            kind: .popover,
+            frame: frame,
+            isKeyWindow: false,
+            isMainWindow: false
+        )
+
+        XCTAssertEqual(
+            ViewSnapshotter.preferredWindowID(in: [main, popover]),
+            "popover"
+        )
+    }
+
+    @MainActor
+    func testWindowServerCaptureInfrastructureIsNotInspectable() {
+        XCTAssertTrue(
+            ViewSnapshotter.isCaptureInfrastructureWindow(
+                className: "NSLocalWindowSharingWindow"
+            )
+        )
+        XCTAssertFalse(
+            ViewSnapshotter.isCaptureInfrastructureWindow(className: "_NSPopoverWindow")
+        )
+    }
+
     @MainActor
     func testExactContentCropRectMapsAppKitCoordinatesToImageCoordinates() {
         let crop = ViewSnapshotter.exactContentCropRect(
@@ -72,6 +125,30 @@ final class ProbeModelsTests: XCTestCase {
         )
 
         XCTAssertEqual(crop, CGRect(x: 0, y: 0, width: 200, height: 200))
+    }
+
+    @MainActor
+    func testExactCaptureRejectsWindowServerFrameFromAnotherWindow() {
+        XCTAssertTrue(
+            ViewSnapshotter.captureFrameMatches(
+                expected: CGSize(width: 360, height: 310),
+                captured: CGSize(width: 362, height: 309)
+            )
+        )
+        XCTAssertFalse(
+            ViewSnapshotter.captureFrameMatches(
+                expected: CGSize(width: 360, height: 310),
+                captured: CGSize(width: 1088, height: 720)
+            )
+        )
+    }
+
+    @MainActor
+    func testPopoverCaptureUsesGeometryMatchedAppKitRendering() {
+        XCTAssertFalse(ViewSnapshotter.supportsExactCapture(kind: .popover))
+        XCTAssertTrue(ViewSnapshotter.supportsExactCapture(kind: .main))
+        XCTAssertTrue(ViewSnapshotter.supportsExactCapture(kind: .sheet))
+        XCTAssertTrue(ViewSnapshotter.supportsExactCapture(kind: .panel))
     }
 
     @MainActor

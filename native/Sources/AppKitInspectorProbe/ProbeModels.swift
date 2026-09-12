@@ -75,9 +75,33 @@ public enum ProbeCaptureRendering: String, Codable, Equatable, Sendable {
     case windowServerExact
 }
 
+public enum ProbeWindowKind: String, Codable, Equatable, Sendable {
+    case main
+    case popover
+    case sheet
+    case panel
+    case window
+}
+
+public struct ProbeWindowOption: Codable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let className: String
+    public let kind: ProbeWindowKind
+    public let frame: ProbeRect
+    public let isKeyWindow: Bool
+    public let isMainWindow: Bool
+}
+
+public struct ProbeWindowList: Codable, Equatable, Sendable {
+    public let windows: [ProbeWindowOption]
+    public let preferredWindowID: String?
+}
+
 public struct ProbeWindow: Codable, Equatable, Sendable {
     public let id: String
     public let title: String
+    public let kind: ProbeWindowKind
     public let frame: ProbeRect
     public let contentFrame: ProbeRect
     public let captureScope: ProbeCaptureScope
@@ -92,6 +116,7 @@ public struct ProbeSnapshot: Codable, Equatable, Sendable {
     public let schemaVersion: Int
     public let target: ProbeTarget
     public let window: ProbeWindow
+    public let availableWindows: [ProbeWindowOption]
     public let imageDataURL: String
     public let root: ProbeViewNode
 }

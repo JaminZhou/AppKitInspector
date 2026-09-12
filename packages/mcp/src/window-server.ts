@@ -12,6 +12,7 @@ import {
   type CaptureScope,
   type InspectResult,
   type Snapshot,
+  type WindowList,
 } from "./contracts.js";
 
 const MAX_REQUEST_BYTES = 64 * 1024;
@@ -36,6 +37,12 @@ export type InspectorTargetState = {
   };
 };
 
+export type InspectorWindowListState = {
+  connected: boolean;
+  isMock: boolean;
+  windowList: WindowList;
+};
+
 export type BrowserLaunch = {
   url: string;
   expiresAt: string;
@@ -43,10 +50,12 @@ export type BrowserLaunch = {
 
 export type InspectorWindowBackend = {
   targetState(): Promise<InspectorTargetState>;
+  windows(): Promise<InspectorWindowListState>;
   preview(
     scope?: CaptureScope,
     mode?: CaptureMode,
     activation?: CaptureActivation,
+    windowID?: string,
   ): Promise<InspectorWindowState>;
   inspect(
     x: number,
@@ -54,6 +63,7 @@ export type InspectorWindowBackend = {
     scope?: CaptureScope,
     mode?: CaptureMode,
     activation?: CaptureActivation,
+    windowID?: string,
   ): Promise<InspectorWindowState>;
 };
 
@@ -263,6 +273,10 @@ export class InspectorWindowServer {
       sendJSON(response, 200, await this.backend.targetState());
       return;
     }
+    if (request.method === "GET" && url.pathname === "/api/windows") {
+      sendJSON(response, 200, await this.backend.windows());
+      return;
+    }
     if (request.method === "GET" && url.pathname === "/api/snapshot") {
       sendJSON(
         response,
@@ -271,6 +285,7 @@ export class InspectorWindowServer {
           captureScope(url.searchParams.get("scope")),
           captureMode(url.searchParams.get("mode")),
           captureActivation(url.searchParams.get("activation")),
+          url.searchParams.get("windowID") ?? undefined,
         ),
       );
       return;
@@ -292,6 +307,9 @@ export class InspectorWindowServer {
           captureScope(body.scope),
           captureMode(body.mode),
           captureActivation(body.activation),
+          typeof body.windowID === "string" && body.windowID.length > 0
+            ? body.windowID
+            : undefined,
         ),
       );
       return;

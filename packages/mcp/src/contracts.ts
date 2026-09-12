@@ -48,6 +48,25 @@ export const captureRenderingSchema = z.enum([
   "windowServerExact",
 ]);
 export type CaptureRendering = z.infer<typeof captureRenderingSchema>;
+export const windowKindSchema = z.enum(["main", "popover", "sheet", "panel", "window"]);
+export type WindowKind = z.infer<typeof windowKindSchema>;
+
+export const windowOptionSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  className: z.string(),
+  kind: windowKindSchema,
+  frame: rectSchema,
+  isKeyWindow: z.boolean(),
+  isMainWindow: z.boolean(),
+});
+export type WindowOption = z.infer<typeof windowOptionSchema>;
+
+export const windowListSchema = z.object({
+  windows: z.array(windowOptionSchema),
+  preferredWindowID: z.string().optional(),
+});
+export type WindowList = z.infer<typeof windowListSchema>;
 
 export const targetSchema = z.object({
   pid: z.number().int().positive(),
@@ -67,11 +86,13 @@ export const snapshotSchema = z.object({
     z.literal(3),
     z.literal(4),
     z.literal(5),
+    z.literal(6),
   ]),
   target: publicTargetSchema,
   window: z.object({
     id: z.string(),
     title: z.string(),
+    kind: windowKindSchema.optional(),
     frame: rectSchema,
     contentFrame: rectSchema.optional(),
     captureScope: captureScopeSchema.optional(),
@@ -81,6 +102,7 @@ export const snapshotSchema = z.object({
     captureRendering: captureRenderingSchema.optional(),
     captureFallbackReason: z.string().optional(),
   }),
+  availableWindows: z.array(windowOptionSchema).optional(),
   imageDataURL: z.string().min(1),
   root: viewNodeSchema,
 });

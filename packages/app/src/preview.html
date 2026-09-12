@@ -35,6 +35,10 @@
       .toolbar button, .primary-action, .secondary-action { min-height: 28px; padding: 0 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
       .toolbar button:disabled { cursor: default; opacity: .45; }
       .toolbar button:hover { background: color-mix(in srgb, var(--text) 7%, var(--panel)); }
+      .window-picker { flex: 0 1 190px; min-width: 110px; }
+      .window-picker select { width: 100%; min-height: 28px; padding: 0 28px 0 9px; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; color: var(--text); background: var(--panel); font: inherit; text-overflow: ellipsis; white-space: nowrap; }
+      .window-picker select:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; }
+      .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
       .zoom-controls { flex: none; display: flex; align-items: center; gap: 4px; }
       .zoom-controls button { min-width: 28px; padding-inline: 7px; }
       .zoom-controls button[aria-pressed="true"] { background: var(--selection); border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); }

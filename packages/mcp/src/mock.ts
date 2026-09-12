@@ -5,6 +5,7 @@ import type {
   InspectResult,
   Snapshot,
   ViewNode,
+  WindowList,
 } from "./contracts.js";
 
 const view = (
@@ -74,7 +75,7 @@ export function mockSnapshot(
 ): Snapshot {
   const contentOnly = scope === "content";
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     target: {
       pid: 1,
       name: "AppKit Inspector Demo",
@@ -85,6 +86,7 @@ export function mockSnapshot(
     window: {
       id: "window-main",
       title: "AppKit Inspector Demo",
+      kind: "main",
       frame: { x: 0, y: 0, width: 960, height: contentOnly ? 552 : 600 },
       contentFrame: { x: 0, y: 0, width: 960, height: 552 },
       captureScope: scope,
@@ -96,8 +98,24 @@ export function mockSnapshot(
         ? { captureFallbackReason: "Exact capture is unavailable for the built-in mock target" }
         : {}),
     },
+    availableWindows: mockWindowList().windows,
     imageDataURL: mockImageDataURL(scope),
     root: contentOnly ? contentRoot : root,
+  };
+}
+
+export function mockWindowList(): WindowList {
+  return {
+    windows: [{
+      id: "window-main",
+      title: "AppKit Inspector Demo",
+      className: "NSWindow",
+      kind: "main",
+      frame: { x: 0, y: 0, width: 960, height: 600 },
+      isKeyWindow: true,
+      isMainWindow: true,
+    }],
+    preferredWindowID: "window-main",
   };
 }
 

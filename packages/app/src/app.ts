@@ -15,7 +15,9 @@ import {
   steppedZoom,
 } from "./viewport.js";
 import { targetRefreshDecision } from "./target-monitor.js";
+import { windowRefreshDecision, type WindowKind } from "./window-monitor.js";
 import {
+  cachedViewAtPoint,
   nativeCommentTargetID,
   nativeCommentTargetLabel,
   nativeCommentTargets,
@@ -23,10 +25,21 @@ import {
 } from "./native-comment-targets.js";
 
 type Rect = { x: number; y: number; width: number; height: number };
+type WindowOption = {
+  id: string;
+  title: string;
+  className: string;
+  kind: WindowKind;
+  frame: Rect;
+  isKeyWindow: boolean;
+  isMainWindow: boolean;
+};
 type Node = {
   id: string;
   className: string;
   frame: Rect;
+  hidden?: boolean;
+  alpha?: number;
   label?: string;
   identifier?: string;
   subviews: Node[];
@@ -34,7 +47,9 @@ type Node = {
 type Snapshot = {
   target: { name: string; pid: number };
   window: {
+    id: string;
     title: string;
+    kind?: WindowKind;
     frame: Rect;
     contentFrame?: Rect;
     captureScope?: CaptureScope;
@@ -44,8 +59,17 @@ type Snapshot = {
     captureRendering?: "viewCache" | "windowFrameHybrid" | "windowServerExact";
     captureFallbackReason?: string;
   };
+  availableWindows?: WindowOption[];
   imageDataURL: string;
   root: Node;
+};
+type WindowListState = {
+  connected: boolean;
+  isMock: boolean;
+  windowList: {
+    windows: WindowOption[];
+    preferredWindowID?: string;
+  };
 };
 type State = {
   connected: boolean;
@@ -91,7 +115,11 @@ let zoomObserver: ResizeObserver | undefined;
 let captureScope: CaptureScope = "windowFrame";
 const captureMode: CaptureMode = "exact";
 let captureActivation: CaptureActivation = "current";
-const TARGET_POLL_INTERVAL_MS = 1_500;
+let windowOptions: WindowOption[] = [];
+let preferredWindowID: string | undefined;
+let manualWindowID: string | undefined;
+let displayedWindowUnavailable = false;
+const TARGET_POLL_INTERVAL_MS = 500;
 
 function isState(value: unknown): value is State {
   if (!value || typeof value !== "object") return false;
@@ -113,6 +141,16 @@ function isLaunchState(value: unknown): value is LaunchState {
     candidate.browserURL === undefined &&
     candidate.launchID === undefined &&
     candidate.confirmed === undefined
+  );
+}
+
+function isWindowListState(value: unknown): value is WindowListState {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<WindowListState>;
+  return Boolean(
+    typeof candidate.connected === "boolean" &&
+    candidate.windowList &&
+    Array.isArray(candidate.windowList.windows),
   );
 }
 
@@ -209,6 +247,51 @@ function captureBadge(snapshot: Snapshot): string {
       : "Legacy Target";
   const reason = fallback ?? "The connected Debug target did not return exact WindowServer pixels; rebuild it against the current probe.";
   return `<span class="capture-note warning" title="${escapeHTML(reason)}">Compatibility Preview · ${detail}</span>`;
+}
+
+function windowKindLabel(kind: WindowKind): string {
+  switch (kind) {
+    case "main": return "Main Window";
+    case "popover": return "Popover";
+    case "sheet": return "Sheet";
+    case "panel": return "Panel";
+    case "window": return "Window";
+  }
+}
+
+function windowOptionLabel(option: WindowOption): string {
+  const kind = windowKindLabel(option.kind);
+  return option.title === kind ? kind : `${kind} — ${option.title}`;
+}
+
+function syncWindowOptionsFromSnapshot(snapshot: Snapshot): void {
+  if (snapshot.availableWindows) windowOptions = snapshot.availableWindows;
+  const listed = windowOptions.find((option) => option.id === snapshot.window.id);
+  if (!listed) {
+    windowOptions = [{
+      id: snapshot.window.id,
+      title: snapshot.window.title,
+      className: snapshot.root.className,
+      kind: snapshot.window.kind ?? "window",
+      frame: snapshot.window.frame,
+      isKeyWindow: false,
+      isMainWindow: snapshot.window.kind === "main",
+    }, ...windowOptions];
+  }
+}
+
+function windowSelector(snapshot: Snapshot): string {
+  const current = windowOptions.find((option) => option.id === snapshot.window.id);
+  const automaticLabel = current
+    ? `Automatic (${windowKindLabel(current.kind)})`
+    : "Automatic";
+  const liveOptions = windowOptions.map((option) =>
+    `<option value="${escapeHTML(option.id)}" ${manualWindowID === option.id ? "selected" : ""}>${escapeHTML(windowOptionLabel(option))}</option>`,
+  ).join("");
+  const staleOption = displayedWindowUnavailable && !windowOptions.some((option) => option.id === snapshot.window.id)
+    ? `<option value="${escapeHTML(snapshot.window.id)}" ${manualWindowID === snapshot.window.id ? "selected" : ""} disabled>${escapeHTML(snapshot.window.title)} (Closed)</option>`
+    : "";
+  return `<label class="window-picker"><span class="visually-hidden">Inspected window</span><select id="window-selector" aria-label="Inspected window"><option value="" ${manualWindowID === undefined ? "selected" : ""}>${escapeHTML(automaticLabel)}</option>${liveOptions}${staleOption}</select></label>`;
 }
 
 function effectiveZoom(): number {
@@ -333,11 +416,13 @@ function renderWorkspace(root: HTMLDivElement): void {
         <span class="status">${escapeHTML(state.isMock ? "Mock target" : `${snapshot.target.name} · pid ${snapshot.target.pid}`)}</span>
         <span class="spacer"></span>
         ${!isLocalSurface ? '<button type="button" id="close-fullscreen">Close</button>' : ""}
+        ${windowSelector(snapshot)}
         <div class="scope-controls" role="group" aria-label="Snapshot area">
           <button type="button" data-capture-scope="windowFrame" aria-pressed="${actualScope === "windowFrame"}" title="Include title bar and window controls">Window</button>
           <button type="button" data-capture-scope="content" aria-pressed="${actualScope === "content"}" title="Show only the application content view">Content</button>
         </div>
         <button type="button" id="capture-active" aria-pressed="${actualActivation === "active"}" title="Temporarily activate the inspected app for each capture, then return focus">Active Appearance</button>
+        ${displayedWindowUnavailable ? '<span class="capture-note warning" title="The native window closed after this snapshot was captured. The retained hierarchy remains selectable.">Closed Window Snapshot</span>' : ""}
         ${captureBadge(snapshot)}
         <div class="zoom-controls" role="group" aria-label="Snapshot zoom">
           <button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom Out">−</button>
@@ -378,12 +463,27 @@ function renderWorkspace(root: HTMLDivElement): void {
   root.querySelector<HTMLButtonElement>("#capture-active")?.addEventListener("click", () => {
     void switchCaptureActivation(actualActivation === "active" ? "current" : "active");
   });
+  root.querySelector<HTMLSelectElement>("#window-selector")?.addEventListener("change", (event) => {
+    const value = (event.currentTarget as HTMLSelectElement).value;
+    void switchCaptureWindow(value || undefined);
+  });
   installZoomControls(root, snapshot);
   root.querySelector<HTMLButtonElement>(".hit-surface")?.addEventListener("click", (event) => {
     const surface = event.currentTarget as HTMLElement;
     const bounds = surface.getBoundingClientRect();
     const point = normalizedPoint(bounds, { x: event.clientX, y: event.clientY });
     if (!point) return;
+    if (displayedWindowUnavailable) {
+      const selected = cachedViewAtPoint(snapshot.root, snapshot.window.frame, point);
+      if (selected) {
+        selectView(selected.node, selected.path);
+        toast = `Selected cached ${selected.node.className}`;
+      } else {
+        toast = "No cached view at that point";
+      }
+      render();
+      return;
+    }
     void inspect(point.x, point.y);
   });
   root.querySelectorAll<HTMLButtonElement>("[data-view-id]").forEach((button) => {
@@ -512,14 +612,22 @@ async function closeFullscreen(): Promise<void> {
   render();
 }
 
-async function snapshotRequest(): Promise<unknown> {
+async function snapshotRequest(
+  activation: CaptureActivation = captureActivation,
+): Promise<unknown> {
   if (localClient) {
-    return await localClient.snapshot<State>(captureScope, captureMode, captureActivation);
+    return await localClient.snapshot<State>(
+      captureScope,
+      captureMode,
+      activation,
+      manualWindowID,
+    );
   }
   return await callInspectorTool("appkit_snapshot", {
     scope: captureScope,
     mode: captureMode,
-    activation: captureActivation,
+    activation,
+    ...(manualWindowID ? { windowID: manualWindowID } : {}),
   });
 }
 
@@ -531,6 +639,7 @@ async function inspectRequest(x: number, y: number): Promise<unknown> {
       captureScope,
       captureMode,
       captureActivation,
+      manualWindowID,
     );
   }
   return await callInspectorTool("appkit_inspect_point", {
@@ -539,19 +648,25 @@ async function inspectRequest(x: number, y: number): Promise<unknown> {
     scope: captureScope,
     mode: captureMode,
     activation: captureActivation,
+    ...(manualWindowID ? { windowID: manualWindowID } : {}),
   });
 }
 
-async function refresh(): Promise<boolean> {
+async function refresh(
+  activation: CaptureActivation = captureActivation,
+): Promise<boolean> {
   if (loading || (!localClient && !fullscreenActive)) return false;
   loading = true;
   toast = "Refreshing…";
   render();
   try {
     const requestedScope = captureScope;
-    const nextState = await snapshotRequest();
+    const nextState = await snapshotRequest(activation);
     if (!isState(nextState)) throw new Error("Inspector returned an invalid snapshot");
     state = nextState;
+    syncWindowOptionsFromSnapshot(nextState.snapshot);
+    if (manualWindowID === undefined) preferredWindowID = nextState.snapshot.window.id;
+    displayedWindowUnavailable = false;
     captureScope = snapshotCaptureScope(nextState.snapshot);
     captureActivation = snapshotCaptureActivation(nextState.snapshot);
     selectedNode = undefined;
@@ -576,7 +691,10 @@ async function refresh(): Promise<boolean> {
 async function refreshAfterTargetChange(): Promise<void> {
   if (!localClient || loading || document.visibilityState === "hidden") return;
   try {
-    const targetState = await localClient.target<LaunchState>();
+    const [targetState, windowsState] = await Promise.all([
+      localClient.target<LaunchState>(),
+      localClient.windows<WindowListState>(),
+    ]);
     const displayedPID = state && !state.isMock ? state.snapshot.target.pid : undefined;
     const nextPID = targetState.target?.pid;
     const decision = targetRefreshDecision(displayedPID, targetState);
@@ -585,13 +703,33 @@ async function refreshAfterTargetChange(): Promise<void> {
         ? "Connected to the relaunched Debug target…"
         : `Debug target restarted as pid ${nextPID}; refreshing…`;
       render();
-      await refresh();
+      await refresh("current");
     } else if (decision === "waiting") {
       const waitingMessage = "Debug target stopped; waiting for it to relaunch…";
       if (toast !== waitingMessage) {
         toast = waitingMessage;
         render();
       }
+    }
+    if (!isWindowListState(windowsState)) return;
+    windowOptions = windowsState.windowList.windows;
+    preferredWindowID = windowsState.windowList.preferredWindowID;
+    const displayedWindowID = state?.snapshot.window.id;
+    const windowDecision = windowRefreshDecision(
+      displayedWindowID,
+      manualWindowID,
+      preferredWindowID,
+      windowOptions,
+    );
+    if (windowDecision === "retain-closed") {
+      displayedWindowUnavailable = true;
+      render();
+    }
+    const preferred = windowOptions.find((option) => option.id === preferredWindowID);
+    if (windowDecision === "capture-preferred" && preferred) {
+      toast = `Detected ${windowKindLabel(preferred.kind)}; capturing…`;
+      render();
+      await refresh("current");
     }
   } catch {
     // The authenticated Inspector session may be closing. Manual Refresh remains available.
@@ -622,6 +760,18 @@ async function switchCaptureActivation(activation: CaptureActivation): Promise<v
   await refresh();
 }
 
+async function switchCaptureWindow(windowID: string | undefined): Promise<void> {
+  if (loading || windowID === manualWindowID) return;
+  manualWindowID = windowID;
+  state = undefined;
+  selectedNode = undefined;
+  selectedPath = undefined;
+  displayedWindowUnavailable = false;
+  toast = windowID ? "Loading selected window…" : "Following the frontmost app window…";
+  render();
+  await refresh();
+}
+
 async function inspect(x: number, y: number): Promise<void> {
   if (!localClient && !fullscreenActive) return;
   toast = "Inspecting point…";
@@ -630,6 +780,8 @@ async function inspect(x: number, y: number): Promise<void> {
     const nextState = await inspectRequest(x, y);
     if (!isState(nextState)) throw new Error("Inspector returned an invalid selection");
     state = nextState;
+    syncWindowOptionsFromSnapshot(nextState.snapshot);
+    displayedWindowUnavailable = false;
     captureScope = snapshotCaptureScope(nextState.snapshot);
     captureActivation = snapshotCaptureActivation(nextState.snapshot);
     selectedNode = nextState.selected?.node;
