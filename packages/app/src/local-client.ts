@@ -38,13 +38,19 @@ export class LocalInspectorClient {
     scope: CaptureScope,
     mode: CaptureMode,
     activation: CaptureActivation = "current",
+    windowID?: string,
   ): Promise<T> {
     const query = new URLSearchParams({ scope, mode, activation });
+    if (windowID) query.set("windowID", windowID);
     return this.call<T>(`/api/snapshot?${query.toString()}`);
   }
 
   target<T>(): Promise<T> {
     return this.call<T>("/api/target");
+  }
+
+  windows<T>(): Promise<T> {
+    return this.call<T>("/api/windows");
   }
 
   inspect<T>(
@@ -53,10 +59,18 @@ export class LocalInspectorClient {
     scope: CaptureScope,
     mode: CaptureMode,
     activation: CaptureActivation = "current",
+    windowID?: string,
   ): Promise<T> {
     return this.call<T>("/api/inspect", {
       method: "POST",
-      body: JSON.stringify({ x, y, scope, mode, activation }),
+      body: JSON.stringify({
+        x,
+        y,
+        scope,
+        mode,
+        activation,
+        ...(windowID ? { windowID } : {}),
+      }),
     });
   }
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  cachedViewAtPoint,
   nativeCommentTargetID,
   nativeCommentTargetLabel,
   nativeCommentTargets,
@@ -62,6 +63,49 @@ test("native Browser comment targets expose semantic AppKit views without infras
   assert.equal(nativeCommentTargetLabel(targets[0]!), "AppKit view: NSButton — Add Folder");
 });
 
+test("native Browser comment targets exclude hidden and transparent view subtrees", () => {
+  const hiddenRoot: CommentTargetNode = {
+    id: "root",
+    className: "NSPopoverFrame",
+    frame: { x: 0, y: 0, width: 300, height: 200 },
+    subviews: [
+      {
+        id: "visible",
+        className: "NSButton",
+        frame: { x: 20, y: 20, width: 80, height: 24 },
+        label: "Visible",
+        subviews: [],
+      },
+      {
+        id: "hidden",
+        className: "NSButton",
+        frame: { x: 20, y: 60, width: 80, height: 24 },
+        hidden: true,
+        label: "Hidden",
+        subviews: [{
+          id: "hidden-child",
+          className: "NSTextField",
+          frame: { x: 22, y: 62, width: 60, height: 20 },
+          label: "Hidden child",
+          subviews: [],
+        }],
+      },
+      {
+        id: "transparent",
+        className: "NSProgressIndicator",
+        frame: { x: 20, y: 100, width: 14, height: 14 },
+        alpha: 0,
+        subviews: [],
+      },
+    ],
+  };
+
+  assert.deepEqual(
+    nativeCommentTargets(hiddenRoot, hiddenRoot.frame).map(({ node }) => node.id),
+    ["visible"],
+  );
+});
+
 test("native Browser comment target IDs are stable and DOM-safe", () => {
   const first = nativeCommentTargetID("0x0000000100abcdef:42");
   assert.equal(first, nativeCommentTargetID("0x0000000100abcdef:42"));
@@ -105,5 +149,75 @@ test("table header virtual nodes expose one precise comment target per column", 
   assert.equal(
     nativeCommentTargetLabel(targets[1]!),
     "AppKit view: NSTableHeaderCell — Events",
+  );
+});
+
+test("closed snapshots select the deepest frontmost cached AppKit view", () => {
+  const backButton: CommentTargetNode = {
+    id: "back",
+    className: "NSButton",
+    frame: { x: 20, y: 20, width: 80, height: 40 },
+    subviews: [],
+  };
+  const frontButton: CommentTargetNode = {
+    id: "front",
+    className: "NSButton",
+    frame: { x: 20, y: 20, width: 80, height: 40 },
+    subviews: [{
+      id: "label",
+      className: "NSTextField",
+      frame: { x: 30, y: 30, width: 60, height: 20 },
+      subviews: [],
+    }],
+  };
+  const cachedRoot: CommentTargetNode = {
+    id: "root",
+    className: "NSPopoverFrame",
+    frame: { x: 0, y: 0, width: 120, height: 100 },
+    subviews: [backButton, frontButton],
+  };
+
+  const selected = cachedViewAtPoint(
+    cachedRoot,
+    cachedRoot.frame,
+    { x: 0.5, y: 0.6 },
+  );
+
+  assert.equal(selected?.node.id, "label");
+  assert.deepEqual(selected?.path, ["NSPopoverFrame", "NSButton", "NSTextField"]);
+});
+
+test("closed snapshot hit testing ignores hidden and transparent cached views", () => {
+  const cachedRoot: CommentTargetNode = {
+    id: "root",
+    className: "NSPopoverFrame",
+    frame: { x: 0, y: 0, width: 100, height: 100 },
+    subviews: [
+      {
+        id: "visible",
+        className: "NSView",
+        frame: { x: 0, y: 0, width: 100, height: 100 },
+        subviews: [],
+      },
+      {
+        id: "hidden",
+        className: "NSButton",
+        frame: { x: 0, y: 0, width: 100, height: 100 },
+        hidden: true,
+        subviews: [],
+      },
+      {
+        id: "transparent",
+        className: "NSButton",
+        frame: { x: 0, y: 0, width: 100, height: 100 },
+        alpha: 0,
+        subviews: [],
+      },
+    ],
+  };
+
+  assert.equal(
+    cachedViewAtPoint(cachedRoot, cachedRoot.frame, { x: 0.5, y: 0.5 })?.node.id,
+    "visible",
   );
 });

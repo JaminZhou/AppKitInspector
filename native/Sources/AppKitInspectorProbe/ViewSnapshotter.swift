@@ -6,6 +6,7 @@ import Foundation
 enum ViewSnapshotter {
     private struct CaptureContext {
         let window: NSWindow
+        let kind: ProbeWindowKind
         let contentView: NSView
         let frameView: NSView
         let rootView: NSView
@@ -16,9 +17,10 @@ enum ViewSnapshotter {
         target: ProbeTarget,
         scope: ProbeCaptureScope = .windowFrame,
         mode: ProbeCaptureMode = .exact,
-        activation: ProbeCaptureActivation = .current
+        activation: ProbeCaptureActivation = .current,
+        windowID: String? = nil
     ) async throws -> ProbeSnapshot {
-        let context = try captureContext(scope: scope)
+        let context = try captureContext(scope: scope, windowID: windowID)
         return try await withCaptureActivation(activation, context: context) {
             try await makeSnapshot(
                 target: target,
@@ -45,20 +47,25 @@ enum ViewSnapshotter {
         let capture = try await capturePNG(context: context, bitmap: bitmap, mode: mode)
 
         return ProbeSnapshot(
-            schemaVersion: 5,
+            schemaVersion: 6,
             target: target,
             window: ProbeWindow(
                 id: objectID(context.window),
-                title: context.window.title,
+                title: windowTitle(context.window, kind: context.kind),
+                kind: context.kind,
                 frame: ProbeRect(rootView.bounds),
                 contentFrame: ProbeRect(contentLayoutFrame(context: context)),
                 captureScope: context.scope,
                 requestedCaptureMode: mode,
                 requestedCaptureActivation: activation,
-                capturedWindowWasActive: NSApp.isActive && context.window.isKeyWindow,
+                capturedWindowWasActive: NSApp.isActive && (
+                    context.window.isKeyWindow ||
+                    ((context.kind == .popover || context.kind == .panel) && context.window.isVisible)
+                ),
                 captureRendering: capture.rendering,
                 captureFallbackReason: capture.fallbackReason
             ),
+            availableWindows: windowList().windows,
             imageDataURL: "data:image/png;base64,\(capture.png.base64EncodedString())",
             root: rootNode
         )
@@ -70,16 +77,21 @@ enum ViewSnapshotter {
         target: ProbeTarget,
         scope: ProbeCaptureScope = .windowFrame,
         mode: ProbeCaptureMode = .exact,
-        activation: ProbeCaptureActivation = .current
+        activation: ProbeCaptureActivation = .current,
+        windowID: String? = nil
     ) async throws -> ProbeInspectResult {
-        let context = try captureContext(scope: scope)
+        let context = try captureContext(scope: scope, windowID: windowID)
         return try await withCaptureActivation(activation, context: context) {
             let rootView = context.rootView
             let point = CGPoint(
                 x: rootView.bounds.width * min(max(x, 0), 1),
                 y: rootView.bounds.height * (1 - min(max(y, 0), 1))
             )
-            let hitView = rootView.hitTest(point) ?? rootView
+            let hitView = standardWindowControl(
+                at: point,
+                in: rootView,
+                window: context.window
+            ) ?? rootView.hitTest(point) ?? rootView
             var ancestors: [String] = []
             var cursor: NSView? = hitView
             while let view = cursor {
@@ -113,9 +125,12 @@ enum ViewSnapshotter {
         let previousFrontmostApplication = NSWorkspace.shared.frontmostApplication
         let previousKeyWindow = NSApp.keyWindow
         let windowWasKey = context.window.isKeyWindow
+        let requiresKeyWindow = context.kind != .popover && context.kind != .panel
 
-        if !applicationWasActive || !windowWasKey {
-            context.window.makeKeyAndOrderFront(nil)
+        if !applicationWasActive || (requiresKeyWindow && !windowWasKey) {
+            if requiresKeyWindow {
+                context.window.makeKeyAndOrderFront(nil)
+            }
             if let previousFrontmostApplication,
                previousFrontmostApplication.processIdentifier != ProcessInfo.processInfo.processIdentifier {
                 _ = NSRunningApplication.current.activate(
@@ -126,8 +141,11 @@ enum ViewSnapshotter {
                 NSApp.activate()
             }
 
-            guard await waitForActiveWindow(context.window) else {
-                restoreActivation(
+            guard await waitForActiveWindow(
+                context.window,
+                requiresKeyWindow: requiresKeyWindow
+            ) else {
+                await restoreActivation(
                     applicationWasActive: applicationWasActive,
                     previousFrontmostApplication: previousFrontmostApplication,
                     previousKeyWindow: previousKeyWindow,
@@ -141,7 +159,7 @@ enum ViewSnapshotter {
 
         do {
             let value = try await operation()
-            restoreActivation(
+            await restoreActivation(
                 applicationWasActive: applicationWasActive,
                 previousFrontmostApplication: previousFrontmostApplication,
                 previousKeyWindow: previousKeyWindow,
@@ -149,7 +167,7 @@ enum ViewSnapshotter {
             )
             return value
         } catch {
-            restoreActivation(
+            await restoreActivation(
                 applicationWasActive: applicationWasActive,
                 previousFrontmostApplication: previousFrontmostApplication,
                 previousKeyWindow: previousKeyWindow,
@@ -159,12 +177,17 @@ enum ViewSnapshotter {
         }
     }
 
-    private static func waitForActiveWindow(_ window: NSWindow) async -> Bool {
+    private static func waitForActiveWindow(
+        _ window: NSWindow,
+        requiresKeyWindow: Bool
+    ) async -> Bool {
         for _ in 0..<60 {
-            if NSApp.isActive && window.isKeyWindow { return true }
+            if NSApp.isActive && (!requiresKeyWindow || window.isKeyWindow) && window.isVisible {
+                return true
+            }
             try? await Task.sleep(for: .milliseconds(16))
         }
-        return NSApp.isActive && window.isKeyWindow
+        return NSApp.isActive && (!requiresKeyWindow || window.isKeyWindow) && window.isVisible
     }
 
     private static func restoreActivation(
@@ -172,7 +195,7 @@ enum ViewSnapshotter {
         previousFrontmostApplication: NSRunningApplication?,
         previousKeyWindow: NSWindow?,
         windowWasKey: Bool
-    ) {
+    ) async {
         if applicationWasActive {
             if !windowWasKey, let previousKeyWindow {
                 previousKeyWindow.makeKey()
@@ -182,7 +205,21 @@ enum ViewSnapshotter {
         guard let previousFrontmostApplication,
               previousFrontmostApplication.processIdentifier != ProcessInfo.processInfo.processIdentifier
         else { return }
+
+        let currentApplication = NSRunningApplication.current
         NSApp.yieldActivation(to: previousFrontmostApplication)
+        _ = previousFrontmostApplication.activate(
+            from: currentApplication,
+            options: []
+        )
+
+        for _ in 0..<30 {
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier
+                == previousFrontmostApplication.processIdentifier {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(16))
+        }
     }
 
     static func viewNode(_ view: NSView, relativeTo rootView: NSView, window: NSWindow) -> ProbeViewNode {
@@ -241,10 +278,38 @@ enum ViewSnapshotter {
         }
     }
 
-    private static func captureContext(scope: ProbeCaptureScope) throws -> CaptureContext {
-        guard let window = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible }),
-              let contentView = window.contentView
-        else {
+    static func windowList() -> ProbeWindowList {
+        let windows = inspectableWindows()
+        let options = windows.map(windowOption)
+        return ProbeWindowList(
+            windows: options,
+            preferredWindowID: preferredWindowID(in: options)
+        )
+    }
+
+    static func preferredWindowID(in options: [ProbeWindowOption]) -> String? {
+        options.enumerated().min { left, right in
+            let leftPriority = windowPriority(left.element)
+            let rightPriority = windowPriority(right.element)
+            return leftPriority == rightPriority ? left.offset < right.offset : leftPriority < rightPriority
+        }?.element.id
+    }
+
+    private static func captureContext(
+        scope: ProbeCaptureScope,
+        windowID: String?
+    ) throws -> CaptureContext {
+        let windows = inspectableWindows()
+        let window: NSWindow?
+        if let windowID {
+            window = windows.first { objectID($0) == windowID }
+            guard window != nil else { throw ProbeError.windowUnavailable }
+        } else if let preferredID = preferredWindowID(in: windows.map(windowOption)) {
+            window = windows.first { objectID($0) == preferredID }
+        } else {
+            window = nil
+        }
+        guard let window, let contentView = window.contentView else {
             throw ProbeError.noVisibleWindow
         }
         let frameView = contentView.superview ?? contentView
@@ -261,11 +326,78 @@ enum ViewSnapshotter {
         }
         return CaptureContext(
             window: window,
+            kind: windowKind(window),
             contentView: contentView,
             frameView: frameView,
             rootView: rootView,
             scope: actualScope
         )
+    }
+
+    private static func inspectableWindows() -> [NSWindow] {
+        var seen = Set<ObjectIdentifier>()
+        return (NSApp.orderedWindows + NSApp.windows).filter { window in
+            let identifier = ObjectIdentifier(window)
+            let className = NSStringFromClass(type(of: window))
+            guard seen.insert(identifier).inserted,
+                  !isCaptureInfrastructureWindow(className: className),
+                  window.isVisible,
+                  !window.isMiniaturized,
+                  window.alphaValue > 0,
+                  window.frame.width >= 2,
+                  window.frame.height >= 2,
+                  window.contentView != nil
+            else { return false }
+            return true
+        }
+    }
+
+    static func isCaptureInfrastructureWindow(className: String) -> Bool {
+        className.localizedCaseInsensitiveContains("LocalWindowSharingWindow")
+    }
+
+    private static func windowOption(_ window: NSWindow) -> ProbeWindowOption {
+        let kind = windowKind(window)
+        return ProbeWindowOption(
+            id: objectID(window),
+            title: windowTitle(window, kind: kind),
+            className: NSStringFromClass(type(of: window)),
+            kind: kind,
+            frame: ProbeRect(window.frame),
+            isKeyWindow: window.isKeyWindow,
+            isMainWindow: window.isMainWindow
+        )
+    }
+
+    private static func windowKind(_ window: NSWindow) -> ProbeWindowKind {
+        let className = NSStringFromClass(type(of: window)).lowercased()
+        if className.contains("popover") { return .popover }
+        if window.isSheet || window.sheetParent != nil { return .sheet }
+        if window is NSPanel { return .panel }
+        if window.isMainWindow || window.canBecomeMain { return .main }
+        return .window
+    }
+
+    private static func windowTitle(_ window: NSWindow, kind: ProbeWindowKind) -> String {
+        let title = window.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard title.isEmpty else { return title }
+        switch kind {
+        case .main: return "Main Window"
+        case .popover: return "Popover"
+        case .sheet: return "Sheet"
+        case .panel: return "Panel"
+        case .window: return "Window"
+        }
+    }
+
+    private static func windowPriority(_ option: ProbeWindowOption) -> Int {
+        switch option.kind {
+        case .popover: return 0
+        case .sheet: return 1
+        case .panel: return 2
+        case .main: return option.isKeyWindow ? 3 : 4
+        case .window: return option.isKeyWindow ? 3 : 5
+        }
     }
 
     private static func contentLayoutFrame(context: CaptureContext) -> NSRect {
@@ -326,11 +458,24 @@ enum ViewSnapshotter {
         guard #available(macOS 14.4, *) else {
             throw ProbeError.exactCaptureUnavailable("Exact Window requires macOS 14.4 or later")
         }
+        guard supportsExactCapture(kind: context.kind) else {
+            throw ProbeError.exactCaptureUnavailable(
+                "AppKit popovers require a geometry-matched AppKit snapshot"
+            )
+        }
 
         let content = try await currentProcessShareableContent()
         let windowID = CGWindowID(context.window.windowNumber)
         guard let capturedWindow = content.windows.first(where: { $0.windowID == windowID }) else {
             throw ProbeError.exactCaptureUnavailable("The current AppKit window is not available to ScreenCaptureKit")
+        }
+        guard captureFrameMatches(
+            expected: context.frameView.bounds.size,
+            captured: capturedWindow.frame.size
+        ) else {
+            throw ProbeError.exactCaptureUnavailable(
+                "ScreenCaptureKit returned a different native window; using the matching AppKit snapshot"
+            )
         }
 
         let configuration = SCStreamConfiguration()
@@ -391,6 +536,24 @@ enum ViewSnapshotter {
         ).integral
         let imageBounds = CGRect(origin: .zero, size: imageSize)
         return proposed.intersection(imageBounds)
+    }
+
+    static func captureFrameMatches(
+        expected: CGSize,
+        captured: CGSize,
+        tolerance: CGFloat = 4
+    ) -> Bool {
+        guard expected.width > 0,
+              expected.height > 0,
+              captured.width > 0,
+              captured.height > 0
+        else { return false }
+        return abs(expected.width - captured.width) <= tolerance
+            && abs(expected.height - captured.height) <= tolerance
+    }
+
+    static func supportsExactCapture(kind: ProbeWindowKind) -> Bool {
+        kind != .popover
     }
 
     @available(macOS 14.4, *)
@@ -561,6 +724,24 @@ enum ViewSnapshotter {
         return nil
     }
 
+    private static func standardWindowControl(
+        at point: CGPoint,
+        in rootView: NSView,
+        window: NSWindow
+    ) -> NSButton? {
+        let buttonTypes: [NSWindow.ButtonType] = [
+            .closeButton,
+            .miniaturizeButton,
+            .zoomButton,
+            .toolbarButton,
+        ]
+        return buttonTypes.compactMap(window.standardWindowButton).first { button in
+            !button.isHidden
+                && button.alphaValue > 0
+                && button.convert(button.bounds, to: rootView).contains(point)
+        }
+    }
+
     private static func objectID(_ object: AnyObject) -> String {
         String(UInt(bitPattern: ObjectIdentifier(object)), radix: 16)
     }
@@ -568,6 +749,7 @@ enum ViewSnapshotter {
 
 enum ProbeError: LocalizedError {
     case noVisibleWindow
+    case windowUnavailable
     case captureFailed
     case exactCaptureUnavailable(String)
     case activeCaptureUnavailable
@@ -578,6 +760,7 @@ enum ProbeError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noVisibleWindow: "No visible AppKit window is available"
+        case .windowUnavailable: "The selected AppKit window is no longer available"
         case .captureFailed: "Unable to capture the AppKit window"
         case let .exactCaptureUnavailable(message): message
         case .activeCaptureUnavailable: "The inspected window did not become active before capture"

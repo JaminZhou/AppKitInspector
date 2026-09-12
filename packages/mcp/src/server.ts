@@ -18,13 +18,15 @@ import {
   type InspectResult,
   type Snapshot,
   type Target,
+  type WindowList,
 } from "./contracts.js";
-import { inspectMockPoint, mockSnapshot } from "./mock.js";
+import { inspectMockPoint, mockSnapshot, mockWindowList } from "./mock.js";
 import {
   discoverTargets,
   publicTarget,
   requestInspectPoint,
   requestSnapshot,
+  requestWindows,
 } from "./targets.js";
 import {
   InspectorWindowServer,
@@ -65,6 +67,12 @@ type PreviewState = {
 type LaunchState = {
   connected: boolean;
   target?: ReturnType<typeof publicTarget>;
+};
+
+type WindowListState = {
+  connected: boolean;
+  isMock: boolean;
+  windowList: WindowList;
 };
 
 export function preferredTarget(
@@ -128,12 +136,13 @@ export class InspectorSession {
     scope: CaptureScope = "windowFrame",
     mode: CaptureMode = "exact",
     activation: CaptureActivation = "current",
+    windowID?: string,
   ): Promise<{ target: Target; snapshot: Snapshot } | undefined> {
     if (this.selectedTarget) {
       try {
         return {
           target: this.selectedTarget,
-          snapshot: await requestSnapshot(this.selectedTarget, scope, mode, activation),
+          snapshot: await requestSnapshot(this.selectedTarget, scope, mode, activation, windowID),
         };
       } catch {}
     }
@@ -142,7 +151,7 @@ export class InspectorSession {
     const target = preferredTarget(targets, this.selectedTarget);
     if (!target) return undefined;
     try {
-      const snapshot = await requestSnapshot(target, scope, mode, activation);
+      const snapshot = await requestSnapshot(target, scope, mode, activation, windowID);
       this.selectedTarget = target;
       return { target, snapshot };
     } catch {
@@ -169,12 +178,35 @@ export class InspectorSession {
     return target;
   }
 
+  async windows(): Promise<WindowListState> {
+    if (this.selectedTarget) {
+      try {
+        return {
+          connected: true,
+          isMock: false,
+          windowList: await requestWindows(this.selectedTarget),
+        };
+      } catch {}
+    }
+    const targets = await this.targets();
+    const target = preferredTarget(targets, this.selectedTarget);
+    if (!target) return { connected: false, isMock: true, windowList: mockWindowList() };
+    try {
+      const windowList = await requestWindows(target);
+      this.selectedTarget = target;
+      return { connected: true, isMock: false, windowList };
+    } catch {
+      return { connected: false, isMock: true, windowList: mockWindowList() };
+    }
+  }
+
   async preview(
     scope: CaptureScope = "windowFrame",
     mode: CaptureMode = "exact",
     activation: CaptureActivation = "current",
+    windowID?: string,
   ): Promise<PreviewState> {
-    const live = await this.liveSnapshot(scope, mode, activation);
+    const live = await this.liveSnapshot(scope, mode, activation, windowID);
     if (!live) {
       const snapshot = mockSnapshot(scope, mode, activation);
       return { connected: false, isMock: true, snapshot };
@@ -192,10 +224,11 @@ export class InspectorSession {
     scope: CaptureScope = "windowFrame",
     mode: CaptureMode = "exact",
     activation: CaptureActivation = "current",
+    windowID?: string,
   ): Promise<PreviewState> {
-    if (!this.selectedTarget) await this.liveSnapshot(scope, mode, activation);
+    if (!this.selectedTarget) await this.liveSnapshot(scope, mode, activation, windowID);
     const selected = this.selectedTarget
-      ? await requestInspectPoint(this.selectedTarget, x, y, scope, mode, activation)
+      ? await requestInspectPoint(this.selectedTarget, x, y, scope, mode, activation, windowID)
       : inspectMockPoint(x, y, scope, mode, activation);
     return {
       connected: Boolean(this.selectedTarget),
@@ -378,6 +411,21 @@ export function createServer(
   }
 
   server.registerTool(
+    "appkit_windows",
+    {
+      title: "List AppKit windows",
+      description: "List visible windows owned by the connected Debug application.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+      _meta: outputMetadata("app"),
+    },
+    async () => {
+      const state = await session.windows();
+      return toolResult("Listed visible AppKit windows.", state);
+    },
+  );
+
+  server.registerTool(
     "appkit_snapshot",
     {
       title: "Refresh AppKit snapshot",
@@ -386,12 +434,13 @@ export function createServer(
         scope: captureScopeSchema.optional(),
         mode: captureModeSchema.optional(),
         activation: captureActivationSchema.optional(),
+        windowID: z.string().min(1).optional(),
       },
       annotations: { readOnlyHint: true },
       _meta: outputMetadata("app", true),
     },
-    async ({ scope, mode, activation }) => {
-      const state = await session.preview(scope, mode, activation);
+    async ({ scope, mode, activation, windowID }) => {
+      const state = await session.preview(scope, mode, activation, windowID);
       return toolResult("Refreshed AppKit snapshot.", state);
     },
   );
@@ -407,12 +456,13 @@ export function createServer(
         scope: captureScopeSchema.optional(),
         mode: captureModeSchema.optional(),
         activation: captureActivationSchema.optional(),
+        windowID: z.string().min(1).optional(),
       },
       annotations: { readOnlyHint: true },
       _meta: outputMetadata("app", true),
     },
-    async ({ x, y, scope, mode, activation }) => {
-      const state = await session.inspect(x, y, scope, mode, activation);
+    async ({ x, y, scope, mode, activation, windowID }) => {
+      const state = await session.inspect(x, y, scope, mode, activation, windowID);
       const node = state.selected?.node;
       return toolResult(
         node ? `Selected ${node.className}${node.label ? ` (${node.label})` : ""}.` : "No view selected.",

@@ -5,7 +5,9 @@ import { inspectMockPoint, mockSnapshot } from "../src/mock.js";
 
 test("mock snapshot satisfies the transport contract", () => {
   const snapshot = snapshotSchema.parse(mockSnapshot());
-  assert.equal(snapshot.schemaVersion, 5);
+  assert.equal(snapshot.schemaVersion, 6);
+  assert.equal(snapshot.window.kind, "main");
+  assert.equal(snapshot.availableWindows?.[0]?.id, "window-main");
   assert.equal(snapshot.window.captureScope, "windowFrame");
   assert.equal(snapshot.window.requestedCaptureMode, "exact");
   assert.equal(snapshot.window.requestedCaptureActivation, "current");

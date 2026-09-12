@@ -39,6 +39,7 @@ private struct ProbeRequest: Decodable {
     let scope: ProbeCaptureScope?
     let mode: ProbeCaptureMode?
     let activation: ProbeCaptureActivation?
+    let windowID: String?
 }
 
 private struct SuccessResponse<Value: Encodable>: Encodable {
@@ -164,6 +165,10 @@ private final class ProbeServer: @unchecked Sendable {
                 let response: Data
                 do {
                     switch request.method {
+                    case "windows":
+                        response = try JSONEncoder().encode(
+                            SuccessResponse(result: ViewSnapshotter.windowList())
+                        )
                     case "snapshot":
                         response = try JSONEncoder().encode(
                             SuccessResponse(
@@ -171,7 +176,8 @@ private final class ProbeServer: @unchecked Sendable {
                                     target: target,
                                     scope: request.scope ?? .windowFrame,
                                     mode: request.mode ?? .exact,
-                                    activation: request.activation ?? .current
+                                    activation: request.activation ?? .current,
+                                    windowID: request.windowID
                                 )
                             )
                         )
@@ -185,7 +191,8 @@ private final class ProbeServer: @unchecked Sendable {
                                     target: target,
                                     scope: request.scope ?? .windowFrame,
                                     mode: request.mode ?? .exact,
-                                    activation: request.activation ?? .current
+                                    activation: request.activation ?? .current,
+                                    windowID: request.windowID
                                 )
                             )
                         )

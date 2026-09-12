@@ -9,6 +9,8 @@ export type CommentTargetNode = {
   id: string;
   className: string;
   frame: CommentTargetRect;
+  hidden?: boolean;
+  alpha?: number;
   label?: string;
   identifier?: string;
   subviews: CommentTargetNode[];
@@ -18,6 +20,11 @@ export type NativeCommentTarget = {
   node: CommentTargetNode;
   depth: number;
   path: string[];
+};
+
+export type NormalizedSnapshotPoint = {
+  x: number;
+  y: number;
 };
 
 const GENERIC_CONTAINER_CLASSES = new Set([
@@ -71,6 +78,7 @@ export function nativeCommentTargets(
   const targets: NativeCommentTarget[] = [];
 
   function visit(node: CommentTargetNode, depth: number, ancestors: string[]): void {
+    if (node.hidden || (node.alpha ?? 1) <= 0) return;
     const path = [...ancestors, node.className];
     if (
       depth > 0 &&
@@ -85,6 +93,57 @@ export function nativeCommentTargets(
 
   visit(root, 0, []);
   return targets;
+}
+
+function containsPoint(rect: CommentTargetRect, point: { x: number; y: number }): boolean {
+  return (
+    finiteRect(rect) &&
+    rect.width > 0 &&
+    rect.height > 0 &&
+    point.x >= rect.x &&
+    point.x <= rect.x + rect.width &&
+    point.y >= rect.y &&
+    point.y <= rect.y + rect.height
+  );
+}
+
+export function cachedViewAtPoint(
+  root: CommentTargetNode,
+  windowFrame: CommentTargetRect,
+  point: NormalizedSnapshotPoint,
+): NativeCommentTarget | undefined {
+  if (
+    !Number.isFinite(point.x) ||
+    !Number.isFinite(point.y) ||
+    windowFrame.width <= 0 ||
+    windowFrame.height <= 0
+  ) {
+    return undefined;
+  }
+
+  const appKitPoint = {
+    x: root.frame.x + windowFrame.width * Math.min(Math.max(point.x, 0), 1),
+    y: root.frame.y + windowFrame.height * (1 - Math.min(Math.max(point.y, 0), 1)),
+  };
+
+  function hit(
+    node: CommentTargetNode,
+    depth: number,
+    ancestors: string[],
+  ): NativeCommentTarget | undefined {
+    if (node.hidden || (node.alpha ?? 1) <= 0 || !containsPoint(node.frame, appKitPoint)) {
+      return undefined;
+    }
+
+    const path = [...ancestors, node.className];
+    for (let index = node.subviews.length - 1; index >= 0; index -= 1) {
+      const result = hit(node.subviews[index]!, depth + 1, path);
+      if (result) return result;
+    }
+    return { node, depth, path };
+  }
+
+  return hit(root, 0, []);
 }
 
 export function nativeCommentTargetID(viewID: string): string {

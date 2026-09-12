@@ -16,15 +16,20 @@ Every request includes the discovery token. Responses are bounded to 64 MiB by t
 
 Supported methods:
 
-- `snapshot`: capture the key window and recursively serialize its `NSView` tree. An optional
+- `windows`: list visible process-owned AppKit windows and identify the automatic preferred window.
+  Popovers, sheets, and panels take precedence over the main window.
+- `snapshot`: capture the requested window and recursively serialize its `NSView` tree. An optional
+  `windowID` pins capture to a specific item returned by `windows`; without it, the probe uses the
+  automatic preferred window. An optional
   `scope` is `windowFrame` by default or `content` for the application content view only. Optional
   `mode` is `exact` by default or `hybrid` for the legacy compatibility renderer. Optional
   `activation` is `current` by default or `active` to temporarily make the inspected window key.
 - `inspectPoint`: convert a normalized top-left image point to AppKit coordinates and return the
   deepest hit-tested view plus its ancestor path. It accepts the same `scope`, `mode`, and
-  `activation`.
+  `activation`, and `windowID`.
 
-Schema version 5 adds `window.requestedCaptureActivation` and
+Schema version 6 adds `window.kind` and `availableWindows`. Schema version 5 adds
+`window.requestedCaptureActivation` and
 `window.capturedWindowWasActive`. Schema version 4 adds `window.requestedCaptureMode`,
 `windowServerExact`, and an optional honest
 `window.captureFallbackReason`. Schema version 3 includes `window.captureRendering`; version 2 adds
@@ -42,6 +47,8 @@ checks the loopback `Host`, checks the `Origin` of state-changing requests, disa
 applies a restrictive content security policy.
 
 The authenticated `GET /api/target` endpoint returns only the selected target's public identity.
+`GET /api/windows` is a lightweight visible-window poll used to capture newly opened transient
+windows without repeatedly requesting full screenshots.
 The Browser polls this lightweight status rather than repeatedly capturing screenshots. When a
 Debug process disappears, the server preserves its bundle identifier; if exactly one replacement
 with that identifier appears, the Browser follows the new PID and refreshes the snapshot.
@@ -97,3 +104,13 @@ Active Appearance capture uses public cooperative AppKit activation. The probe r
 frontmost application, makes the inspected window key, waits until AppKit confirms the active
 state, captures the frame, and yields activation back. It never changes `isEmphasized` or paints a
 synthetic selection state. The focus handoff can be briefly visible and is never the default.
+Automatic target/window monitoring always requests `current` activation, so restoring a Codex task
+or detecting a transient window cannot activate the inspected application.
+
+## Multiple windows
+
+The probe enumerates only visible windows owned by the inspected Debug process. Automatic selection
+prefers popovers, then sheets, panels, the key/main window, and other visible windows. Each snapshot
+still contains exactly one WindowServer image and one matching view hierarchy so geometry remains
+unambiguous. The Browser keeps the final snapshot when a transient window disappears; selecting a
+live window or manually refreshing resumes live point inspection.
