@@ -20,6 +20,7 @@ export type NativeCommentTarget = {
   node: CommentTargetNode;
   depth: number;
   path: string[];
+  order: number;
 };
 
 export type NormalizedSnapshotPoint = {
@@ -62,7 +63,7 @@ function intersectsWindow(rect: CommentTargetRect, windowFrame: CommentTargetRec
   );
 }
 
-function isSemanticView(node: CommentTargetNode): boolean {
+export function isSemanticView(node: CommentTargetNode): boolean {
   if (node.label?.trim()) return true;
   if (node.className.startsWith("_")) return false;
   if (GENERIC_CONTAINER_CLASSES.has(node.className)) return false;
@@ -71,22 +72,36 @@ function isSemanticView(node: CommentTargetNode): boolean {
   return node.subviews.length === 0 || isProductView;
 }
 
+export function isVisibleView(
+  node: CommentTargetNode,
+  windowFrame: CommentTargetRect,
+): boolean {
+  return (
+    !node.hidden &&
+    (node.alpha ?? 1) > 0 &&
+    finiteRect(node.frame) &&
+    intersectsWindow(node.frame, windowFrame)
+  );
+}
+
 export function nativeCommentTargets(
   root: CommentTargetNode,
   windowFrame: CommentTargetRect,
 ): NativeCommentTarget[] {
   const targets: NativeCommentTarget[] = [];
+  let paintOrder = 0;
 
   function visit(node: CommentTargetNode, depth: number, ancestors: string[]): void {
     if (node.hidden || (node.alpha ?? 1) <= 0) return;
+    const order = paintOrder;
+    paintOrder += 1;
     const path = [...ancestors, node.className];
     if (
       depth > 0 &&
-      finiteRect(node.frame) &&
-      intersectsWindow(node.frame, windowFrame) &&
+      isVisibleView(node, windowFrame) &&
       isSemanticView(node)
     ) {
-      targets.push({ node, depth, path });
+      targets.push({ node, depth, path, order });
     }
     node.subviews.forEach((child) => visit(child, depth + 1, path));
   }
@@ -140,7 +155,7 @@ export function cachedViewAtPoint(
       const result = hit(node.subviews[index]!, depth + 1, path);
       if (result) return result;
     }
-    return { node, depth, path };
+    return { node, depth, path, order: 0 };
   }
 
   return hit(root, 0, []);

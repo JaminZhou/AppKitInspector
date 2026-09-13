@@ -18,6 +18,8 @@ import { targetRefreshDecision } from "./target-monitor.js";
 import { windowRefreshDecision, type WindowKind } from "./window-monitor.js";
 import {
   cachedViewAtPoint,
+  isSemanticView,
+  isVisibleView,
   nativeCommentTargetID,
   nativeCommentTargetLabel,
   nativeCommentTargets,
@@ -86,10 +88,25 @@ type FullscreenLaunch = LaunchState & {
 };
 
 const isLocalSurface = window.location.protocol === "http:" && window.location.hostname === "127.0.0.1";
+const STANDALONE_TOKEN_KEY = "appkit-inspector-token";
 const connection = standaloneConnection(window.location);
-if (connection?.token) window.history.replaceState(null, "", connection.cleanURL);
+const persistedToken = (() => {
+  try {
+    return window.sessionStorage.getItem(STANDALONE_TOKEN_KEY) ?? undefined;
+  } catch {
+    return undefined;
+  }
+})();
+if (connection?.token) {
+  try {
+    window.sessionStorage.setItem(STANDALONE_TOKEN_KEY, connection.token);
+  } catch {
+    // Private browsing or an embedded host may deny session storage.
+  }
+  window.history.replaceState(null, "", connection.cleanURL);
+}
 const localClient = connection
-  ? new LocalInspectorClient(connection.origin, connection.token)
+  ? new LocalInspectorClient(connection.origin, connection.token ?? persistedToken)
   : undefined;
 const bridge = isLocalSurface
   ? undefined
@@ -102,6 +119,7 @@ const bridge = isLocalSurface
 let state: State | undefined;
 let selectedNode: Node | undefined;
 let selectedPath: string[] | undefined;
+let selectedViewID: string | undefined;
 let toast = isLocalSurface ? "Loading the connected app…" : "Connecting to Codex…";
 let bridgeConnected = false;
 let launchState: LaunchState | undefined;
@@ -119,6 +137,8 @@ let windowOptions: WindowOption[] = [];
 let preferredWindowID: string | undefined;
 let manualWindowID: string | undefined;
 let displayedWindowUnavailable = false;
+let treeQuery = "";
+let showAllViews = false;
 const TARGET_POLL_INTERVAL_MS = 500;
 
 function isState(value: unknown): value is State {
@@ -175,6 +195,42 @@ function rows(
   ];
 }
 
+type ViewRow = { node: Node; depth: number; path: string[] };
+
+function allViewRows(snapshot: Snapshot): ViewRow[] {
+  return rows(snapshot.root);
+}
+
+function treeViewRows(snapshot: Snapshot): { all: ViewRow[]; filtered: ViewRow[] } {
+  const all = allViewRows(snapshot);
+  const query = treeQuery.trim().toLowerCase();
+  const candidates = showAllViews
+    ? all
+    : all.filter(({ node, depth }) =>
+        depth === 0 || (isVisibleView(node, snapshot.window.frame) && isSemanticView(node)),
+      );
+  const filtered = query
+    ? candidates.filter(({ node, path }) => {
+        const haystack = [
+          node.className,
+          node.label,
+          node.identifier,
+          path.join(" "),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(query);
+      })
+    : candidates;
+  return { all, filtered };
+}
+
+function viewRow(snapshot: Snapshot, viewID: string | undefined): ViewRow | undefined {
+  if (!viewID) return undefined;
+  return allViewRows(snapshot).find(({ node }) => node.id === viewID);
+}
+
 function escapeHTML(value: string): string {
   return value.replace(/[&<>'\"]/g, (character) => {
     const entities: Record<string, string> = {
@@ -200,6 +256,13 @@ function highlightStyle(node: Node, snapshot: Snapshot): string {
 function selectView(node: Node, path: string[]): void {
   selectedNode = node;
   selectedPath = path;
+  selectedViewID = node.id;
+}
+
+function clearSelection(): void {
+  selectedNode = undefined;
+  selectedPath = undefined;
+  selectedViewID = undefined;
 }
 
 function selectionHighlight(snapshot: Snapshot): string {
@@ -209,14 +272,14 @@ function selectionHighlight(snapshot: Snapshot): string {
 }
 
 function nativeCommentTargetStyle(target: NativeCommentTarget, snapshot: Snapshot): string {
-  return `${highlightStyle(target.node, snapshot)};z-index:${10 + target.depth}`;
+  return `${highlightStyle(target.node, snapshot)};z-index:${10 + target.order}`;
 }
 
 function nativeCommentTargetOverlays(snapshot: Snapshot): string {
   return nativeCommentTargets(snapshot.root, snapshot.window.frame)
     .map((target) => {
       const label = nativeCommentTargetLabel(target);
-      return `<button type="button" id="${nativeCommentTargetID(target.node.id)}" class="native-comment-target" data-view-id="${escapeHTML(target.node.id)}" data-appkit-class="${escapeHTML(target.node.className)}" data-appkit-hierarchy="${escapeHTML(target.path.join(" › "))}" aria-label="${escapeHTML(label)}" title="${escapeHTML(label)}" style="${nativeCommentTargetStyle(target, snapshot)}"></button>`;
+      return `<button type="button" id="${nativeCommentTargetID(target.node.id)}" class="native-comment-target" data-comment-target="true" data-view-id="${escapeHTML(target.node.id)}" data-appkit-class="${escapeHTML(target.node.className)}" data-appkit-hierarchy="${escapeHTML(target.path.join(" › "))}" aria-label="${escapeHTML(label)}" title="${escapeHTML(label)}" style="${nativeCommentTargetStyle(target, snapshot)}"></button>`;
     })
     .join("");
 }
@@ -387,6 +450,88 @@ function renderLauncher(root: HTMLDivElement): void {
   });
 }
 
+function treeRowMarkup(row: ViewRow, selected: Node | undefined): string {
+  const detail = row.node.label?.trim() || row.node.identifier?.trim();
+  const selectedState = selected?.id === row.node.id;
+  const indent = 8 + Math.min(row.depth, 8) * 14;
+  return `<button type="button" role="treeitem" aria-selected="${selectedState}" aria-level="${row.depth + 1}" data-view-id="${escapeHTML(row.node.id)}" class="${selectedState ? "selected" : ""}" style="padding-left:${indent}px" title="${escapeHTML(row.path.join(" › "))}"><span>${escapeHTML(row.node.className)}</span>${detail ? ` <small>${escapeHTML(detail)}</small>` : ""}</button>`;
+}
+
+function treeResultsMarkup(snapshot: Snapshot, selected: Node | undefined): {
+  allCount: number;
+  filteredCount: number;
+  markup: string;
+} {
+  const { all, filtered } = treeViewRows(snapshot);
+  return {
+    allCount: all.length,
+    filteredCount: filtered.length,
+    markup: filtered.length
+      ? filtered.map((row) => treeRowMarkup(row, selected)).join("")
+      : '<div class="tree-empty" role="status">No matching views</div>',
+  };
+}
+
+function treePanelMarkup(snapshot: Snapshot, selected: Node | undefined): string {
+  const results = treeResultsMarkup(snapshot, selected);
+  const modeLabel = showAllViews ? "Relevant" : "All views";
+  const modeTitle = showAllViews
+    ? "Show visible semantic views"
+    : "Show all captured views";
+  return `<div class="tree-toolbar">
+    <label class="tree-filter"><span class="visually-hidden">Filter AppKit views</span><input id="tree-filter" type="search" autocomplete="off" placeholder="Filter views" aria-label="Filter AppKit views" value="${escapeHTML(treeQuery)}" /></label>
+    <button type="button" id="tree-mode" aria-pressed="${showAllViews}" title="${modeTitle}">${modeLabel}</button>
+    <span class="tree-count" data-tree-count aria-live="polite">${results.filteredCount} of ${results.allCount} views</span>
+  </div>
+  <div class="tree" role="tree" aria-label="AppKit view hierarchy">${results.markup}</div>`;
+}
+
+function updateTreeResults(root: HTMLDivElement, snapshot: Snapshot, selected: Node | undefined): void {
+  const tree = root.querySelector<HTMLElement>(".tree");
+  const count = root.querySelector<HTMLElement>("[data-tree-count]");
+  if (!tree || !count) return;
+  const results = treeResultsMarkup(snapshot, selected);
+  tree.innerHTML = results.markup;
+  count.textContent = `${results.filteredCount} of ${results.allCount} views`;
+  installTreeSelectionHandlers(root, snapshot);
+}
+
+function installTreeSelectionHandlers(root: HTMLDivElement, snapshot: Snapshot): void {
+  root.querySelectorAll<HTMLButtonElement>('.tree [data-view-id]').forEach((button) => {
+    button.addEventListener("click", () => {
+      const selected = viewRow(snapshot, button.dataset.viewId);
+      if (!selected) return;
+      selectView(selected.node, selected.path);
+      toast = `Selected ${selected.node.className}`;
+      render();
+    });
+  });
+}
+
+function installNativeCommentTargetHandlers(root: HTMLDivElement, snapshot: Snapshot): void {
+  root.querySelectorAll<HTMLButtonElement>(".native-comment-target").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const selected = viewRow(snapshot, button.dataset.viewId);
+      if (!selected) return;
+      selectView(selected.node, selected.path);
+      toast = `Selected ${selected.node.className}`;
+      render();
+    });
+  });
+}
+
+function installTreeControls(root: HTMLDivElement, snapshot: Snapshot): void {
+  root.querySelector<HTMLInputElement>("#tree-filter")?.addEventListener("input", (event) => {
+    treeQuery = (event.currentTarget as HTMLInputElement).value;
+    updateTreeResults(root, snapshot, selectedNode ?? state?.selected?.node);
+  });
+  root.querySelector<HTMLButtonElement>("#tree-mode")?.addEventListener("click", () => {
+    showAllViews = !showAllViews;
+    render();
+  });
+}
+
 function renderWorkspace(root: HTMLDivElement): void {
   const canLoad = Boolean(localClient || (bridge && fullscreenActive));
   const mode = isLocalSurface ? "window" : "fullscreen";
@@ -402,12 +547,6 @@ function renderWorkspace(root: HTMLDivElement): void {
   const actualScope = snapshotCaptureScope(snapshot);
   const actualActivation = snapshotCaptureActivation(snapshot);
   const node = selectedNode ?? state.selected?.node;
-  const treeRows = rows(snapshot.root)
-    .map(
-      ({ node: item, depth }) =>
-        `<button type="button" role="treeitem" data-view-id="${escapeHTML(item.id)}" class="${node?.id === item.id ? "selected" : ""}" style="padding-left:${8 + depth * 14}px"><span>${escapeHTML(item.className)}</span>${item.label ? ` <small>${escapeHTML(item.label)}</small>` : ""}</button>`,
-    )
-    .join("");
   const path = selectedPath?.join(" › ") ?? node?.className ?? "Click a view to inspect it";
   root.innerHTML = `
     <main class="shell mode-${mode}" data-display-mode="${mode}">
@@ -445,7 +584,7 @@ function renderWorkspace(root: HTMLDivElement): void {
         </div>
         <aside class="inspector">
           <div class="summary"><h2>${escapeHTML(node?.className ?? "No Selection")}</h2><p>${escapeHTML(path)}</p>${node ? `<p>x ${Math.round(node.frame.x)} · y ${Math.round(node.frame.y)} · ${Math.round(node.frame.width)} × ${Math.round(node.frame.height)}</p>` : ""}</div>
-          <div class="tree" role="tree" aria-label="AppKit view hierarchy">${treeRows}</div>
+          ${treePanelMarkup(snapshot, node)}
         </aside>
       </section>
     </main>`;
@@ -468,6 +607,9 @@ function renderWorkspace(root: HTMLDivElement): void {
     void switchCaptureWindow(value || undefined);
   });
   installZoomControls(root, snapshot);
+  installTreeControls(root, snapshot);
+  installTreeSelectionHandlers(root, snapshot);
+  installNativeCommentTargetHandlers(root, snapshot);
   root.querySelector<HTMLButtonElement>(".hit-surface")?.addEventListener("click", (event) => {
     const surface = event.currentTarget as HTMLElement;
     const bounds = surface.getBoundingClientRect();
@@ -485,13 +627,6 @@ function renderWorkspace(root: HTMLDivElement): void {
       return;
     }
     void inspect(point.x, point.y);
-  });
-  root.querySelectorAll<HTMLButtonElement>("[data-view-id]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const selected = rows(snapshot.root).find(({ node: item }) => item.id === button.dataset.viewId);
-      if (selected) selectView(selected.node, selected.path);
-      render();
-    });
   });
 }
 
@@ -661,6 +796,9 @@ async function refresh(
   render();
   try {
     const requestedScope = captureScope;
+    const previousTargetPID = state?.snapshot.target.pid;
+    const previousWindowID = state?.snapshot.window.id;
+    const previousSelectionID = selectedViewID ?? selectedNode?.id ?? state?.selected?.node.id;
     const nextState = await snapshotRequest(activation);
     if (!isState(nextState)) throw new Error("Inspector returned an invalid snapshot");
     state = nextState;
@@ -669,8 +807,19 @@ async function refresh(
     displayedWindowUnavailable = false;
     captureScope = snapshotCaptureScope(nextState.snapshot);
     captureActivation = snapshotCaptureActivation(nextState.snapshot);
-    selectedNode = undefined;
-    selectedPath = undefined;
+    const selectionContextIsStable =
+      previousTargetPID === nextState.snapshot.target.pid &&
+      previousWindowID === nextState.snapshot.window.id;
+    const refreshedSelection = selectionContextIsStable
+      ? viewRow(nextState.snapshot, previousSelectionID)
+      : undefined;
+    if (refreshedSelection) {
+      selectView(refreshedSelection.node, refreshedSelection.path);
+    } else if (nextState.selected) {
+      selectView(nextState.selected.node, nextState.selected.ancestorPath);
+    } else {
+      clearSelection();
+    }
     toast = requestedScope !== captureScope
       ? "Window Frame requires a rebuilt Debug target; showing Content instead"
       : nextState.snapshot.window.captureFallbackReason
@@ -740,8 +889,7 @@ async function switchCaptureScope(scope: CaptureScope): Promise<void> {
   if (loading || scope === captureScope) return;
   captureScope = scope;
   state = undefined;
-  selectedNode = undefined;
-  selectedPath = undefined;
+  clearSelection();
   toast = scope === "windowFrame" ? "Loading Window Frame…" : "Loading Content…";
   render();
   await refresh();
@@ -751,8 +899,7 @@ async function switchCaptureActivation(activation: CaptureActivation): Promise<v
   if (loading || activation === captureActivation) return;
   captureActivation = activation;
   state = undefined;
-  selectedNode = undefined;
-  selectedPath = undefined;
+  clearSelection();
   toast = activation === "active"
     ? "Temporarily activating the inspected app for a true-appearance capture…"
     : "Loading the inspected window’s current state…";
@@ -764,8 +911,7 @@ async function switchCaptureWindow(windowID: string | undefined): Promise<void> 
   if (loading || windowID === manualWindowID) return;
   manualWindowID = windowID;
   state = undefined;
-  selectedNode = undefined;
-  selectedPath = undefined;
+  clearSelection();
   displayedWindowUnavailable = false;
   toast = windowID ? "Loading selected window…" : "Following the frontmost app window…";
   render();
@@ -784,8 +930,11 @@ async function inspect(x: number, y: number): Promise<void> {
     displayedWindowUnavailable = false;
     captureScope = snapshotCaptureScope(nextState.snapshot);
     captureActivation = snapshotCaptureActivation(nextState.snapshot);
-    selectedNode = nextState.selected?.node;
-    selectedPath = nextState.selected?.ancestorPath;
+    if (nextState.selected) {
+      selectView(nextState.selected.node, nextState.selected.ancestorPath);
+    } else {
+      clearSelection();
+    }
     toast = selectedNode ? `Selected ${selectedNode.className}` : "No view at that point";
   } catch (error) {
     toast = errorMessage(error);

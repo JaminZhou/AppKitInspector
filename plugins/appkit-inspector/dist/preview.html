@@ -70,20 +70,28 @@
       .native-comment-target { position: absolute; margin: 0; padding: 0; border: 0; border-radius: 0; outline: 0; background: transparent; }
       .native-comment-target:focus, .native-comment-target:focus-visible { outline: 0; }
       .highlight { position: absolute; z-index: 1000; pointer-events: none; border: 2px solid var(--accent); background: var(--selection); box-shadow: 0 0 0 1px #fff8 inset, 0 0 0 1px #0003; }
-      .inspector { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(100px, 1fr); border-left: 1px solid var(--line); background: var(--panel); }
+      .inspector { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto minmax(100px, 1fr); border-left: 1px solid var(--line); background: var(--panel); }
       .summary { padding: 14px; border-bottom: 1px solid var(--line); }
       .summary h2 { margin: 0 0 5px; font-size: 14px; }
       .summary p { margin: 0; color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; }
+      .tree-toolbar { min-width: 0; display: flex; align-items: center; gap: 6px; padding: 8px; border-bottom: 1px solid var(--line); background: var(--panel); }
+      .tree-filter { min-width: 0; flex: 1; }
+      .tree-filter input { width: 100%; min-height: 28px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; color: var(--text); background: var(--sidebar); font: inherit; }
+      .tree-filter input:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; }
+      .tree-toolbar button { flex: none; min-height: 28px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+      .tree-toolbar button:hover { background: color-mix(in srgb, var(--text) 7%, var(--panel)); }
+      .tree-count { flex: none; min-width: 58px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
       .tree { min-height: 0; overflow: auto; padding: 8px; background: var(--sidebar); }
       .tree button { width: 100%; min-height: 28px; display: block; overflow: hidden; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
       .tree button:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
       .tree button.selected { color: white; background: var(--accent); }
       .tree small { opacity: .72; }
+      .tree-empty { padding: 14px 8px; color: var(--muted); text-align: center; }
       .startup { min-height: 0; display: grid; place-items: center; padding: 32px; color: var(--muted); text-align: center; }
       .startup strong { display: block; margin-bottom: 6px; color: var(--text); }
       @media (max-width: 900px) { .toolbar .status { display: none; } }
       @media (max-width: 640px) { .launcher { gap: 10px; padding-inline: 12px; } .launcher > div:first-child { display: none; } .launcher-actions { width: 100%; } .launcher-actions button { flex: 1; } }
-      @media (max-width: 760px) { .content { grid-template-columns: 1fr; grid-template-rows: minmax(340px, 1fr) 340px; } .inspector { grid-template-rows: auto minmax(70px, 1fr); border-left: 0; border-top: 1px solid var(--line); } }
+      @media (max-width: 760px) { .content { grid-template-columns: 1fr; grid-template-rows: minmax(340px, 1fr) 340px; } .inspector { grid-template-rows: auto auto minmax(70px, 1fr); border-left: 0; border-top: 1px solid var(--line); } }
     </style>
   </head>
   <body>
