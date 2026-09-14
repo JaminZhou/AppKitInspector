@@ -31,6 +31,8 @@
       .toolbar { display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
       .toolbar strong { font-size: 13px; }
       .toolbar .status { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+      .toolbar .activity-status { min-width: 0; max-width: 240px; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+      .toolbar .activity-status.is-loading { color: var(--accent); }
       .toolbar .spacer { flex: 1; }
       .toolbar button, .primary-action, .secondary-action { min-height: 28px; padding: 0 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
       .toolbar button:disabled { cursor: default; opacity: .45; }
@@ -89,7 +91,7 @@
       .tree-empty { padding: 14px 8px; color: var(--muted); text-align: center; }
       .startup { min-height: 0; display: grid; place-items: center; padding: 32px; color: var(--muted); text-align: center; }
       .startup strong { display: block; margin-bottom: 6px; color: var(--text); }
-      @media (max-width: 900px) { .toolbar .status { display: none; } }
+      @media (max-width: 900px) { .toolbar .status, .toolbar .activity-status { display: none; } }
       @media (max-width: 640px) { .launcher { gap: 10px; padding-inline: 12px; } .launcher > div:first-child { display: none; } .launcher-actions { width: 100%; } .launcher-actions button { flex: 1; } }
       @media (max-width: 760px) { .content { grid-template-columns: 1fr; grid-template-rows: minmax(340px, 1fr) 340px; } .inspector { grid-template-rows: auto auto minmax(70px, 1fr); border-left: 0; border-top: 1px solid var(--line); } }
     </style>

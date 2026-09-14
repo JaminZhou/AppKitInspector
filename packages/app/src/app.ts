@@ -553,6 +553,7 @@ function renderWorkspace(root: HTMLDivElement): void {
       <header class="toolbar">
         <strong>AppKit Inspector</strong>
         <span class="status">${escapeHTML(state.isMock ? "Mock target" : `${snapshot.target.name} · pid ${snapshot.target.pid}`)}</span>
+        <span class="activity-status${loading ? " is-loading" : ""}" role="status" aria-live="polite" title="${escapeHTML(toast)}">${escapeHTML(toast)}</span>
         <span class="spacer"></span>
         ${!isLocalSurface ? '<button type="button" id="close-fullscreen">Close</button>' : ""}
         ${windowSelector(snapshot)}
@@ -569,7 +570,7 @@ function renderWorkspace(root: HTMLDivElement): void {
           <output id="zoom-value" aria-live="polite">100%</output>
           <button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom In">+</button>
         </div>
-        <button type="button" id="refresh" aria-label="Refresh snapshot">Refresh</button>
+        <button type="button" id="refresh" aria-label="Refresh snapshot" aria-busy="${loading}" ${loading ? "disabled" : ""}>${loading ? "Refreshing…" : "Refresh"}</button>
       </header>
       <section class="content">
         <div class="stage" aria-label="Application snapshot canvas">
