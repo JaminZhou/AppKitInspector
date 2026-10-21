@@ -28,7 +28,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@types/node": "22.19.11",
     "esbuild": "0.28.2",
     "tsx": "4.21.0",
